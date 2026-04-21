@@ -12,6 +12,7 @@ spec:
       chart: spark-operator
       targetRevision: "2.1.0"
       helm:
+        skipCrds: true
         valueFiles:
           - $values/helm/spark-operator/values.yaml
     - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
