@@ -1,31 +1,77 @@
-apiVersion: kafka.strimzi.io/v1beta2
-kind: KafkaConnect
+---
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: kafka-connect
   namespace: streaming
-  annotations:
-    strimzi.io/use-connector-resources: "true"
 spec:
-  version: 3.7.0
   replicas: 1
-  bootstrapServers: kafka-cluster-kafka-bootstrap:9092
-  image: quay.io/debezium/connect:2.6
-  config:
-    group.id: connect-cluster
-    offset.storage.topic: connect-cluster-offsets
-    config.storage.topic: connect-cluster-configs
-    status.storage.topic: connect-cluster-status
-    offset.storage.replication.factor: 1
-    config.storage.replication.factor: 1
-    status.storage.replication.factor: 1
-    key.converter: org.apache.kafka.connect.json.JsonConverter
-    value.converter: org.apache.kafka.connect.json.JsonConverter
-    key.converter.schemas.enable: false
-    value.converter.schemas.enable: false
-  resources:
-    requests:
-      memory: 512Mi
-      cpu: 250m
-    limits:
-      memory: 1Gi
-      cpu: 500m
+  selector:
+    matchLabels:
+      app: kafka-connect
+  template:
+    metadata:
+      labels:
+        app: kafka-connect
+    spec:
+      containers:
+        - name: kafka-connect
+          image: quay.io/debezium/connect:2.6
+          ports:
+            - containerPort: 8083
+          env:
+            - name: BOOTSTRAP_SERVERS
+              value: kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092
+            - name: GROUP_ID
+              value: connect-cluster
+            - name: CONFIG_STORAGE_TOPIC
+              value: connect-cluster-configs
+            - name: OFFSET_STORAGE_TOPIC
+              value: connect-cluster-offsets
+            - name: STATUS_STORAGE_TOPIC
+              value: connect-cluster-status
+            - name: CONFIG_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: OFFSET_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: STATUS_STORAGE_REPLICATION_FACTOR
+              value: "1"
+            - name: KEY_CONVERTER
+              value: org.apache.kafka.connect.json.JsonConverter
+            - name: VALUE_CONVERTER
+              value: org.apache.kafka.connect.json.JsonConverter
+            - name: KEY_CONVERTER_SCHEMAS_ENABLE
+              value: "false"
+            - name: VALUE_CONVERTER_SCHEMAS_ENABLE
+              value: "false"
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+            limits:
+              memory: 1Gi
+              cpu: 500m
+          readinessProbe:
+            httpGet:
+              path: /connectors
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /connectors
+              port: 8083
+            initialDelaySeconds: 60
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-connect
+  namespace: streaming
+spec:
+  selector:
+    app: kafka-connect
+  ports:
+    - port: 8083
+      targetPort: 8083
