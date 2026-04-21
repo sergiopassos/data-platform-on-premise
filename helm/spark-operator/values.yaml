@@ -2,7 +2,7 @@ replicaCount: 1
 
 webhook:
   enable: true
-  port: 8080
+  port: 9443
 
 sparkJobNamespaces:
   - processing
