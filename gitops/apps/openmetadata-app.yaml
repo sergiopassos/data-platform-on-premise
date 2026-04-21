@@ -7,13 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/sergiopassos/data-platform-on-premise
-    targetRevision: HEAD
-    path: helm/openmetadata
-    helm:
-      valueFiles:
-        - values.yaml
+  sources:
+    - repoURL: https://helm.open-metadata.org
+      chart: openmetadata
+      targetRevision: "1.4.7"
+      helm:
+        valueFiles:
+          - $values/helm/openmetadata/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: governance

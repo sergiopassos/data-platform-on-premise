@@ -7,13 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/sergiopassos/data-platform-on-premise
-    targetRevision: HEAD
-    path: helm/spark-operator
-    helm:
-      valueFiles:
-        - values.yaml
+  sources:
+    - repoURL: https://kubeflow.github.io/spark-operator
+      chart: spark-operator
+      targetRevision: "2.1.0"
+      helm:
+        valueFiles:
+          - $values/helm/spark-operator/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: processing

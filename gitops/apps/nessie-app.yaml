@@ -7,13 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/sergiopassos/data-platform-on-premise
-    targetRevision: HEAD
-    path: helm/nessie
-    helm:
-      valueFiles:
-        - values.yaml
+  sources:
+    - repoURL: https://charts.projectnessie.org
+      chart: nessie
+      targetRevision: "0.80.0"
+      helm:
+        valueFiles:
+          - $values/helm/nessie/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: infra

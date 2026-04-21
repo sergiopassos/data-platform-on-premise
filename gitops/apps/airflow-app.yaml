@@ -7,13 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://github.com/sergiopassos/data-platform-on-premise
-    targetRevision: HEAD
-    path: helm/airflow
-    helm:
-      valueFiles:
-        - values.yaml
+  sources:
+    - repoURL: https://airflow.apache.org
+      chart: airflow
+      targetRevision: "1.15.0"
+      helm:
+        valueFiles:
+          - $values/helm/airflow/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: orchestration

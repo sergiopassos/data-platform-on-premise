@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "chainlit-portal.fullname" . }}
+  labels:
+    app: {{ include "chainlit-portal.fullname" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "chainlit-portal.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "chainlit-portal.fullname" . }}
+    spec:
+      containers:
+        - name: chainlit
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: contracts
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: contracts
+          persistentVolumeClaim:
+            claimName: {{ include "chainlit-portal.fullname" . }}-contracts
+      {{- end }}

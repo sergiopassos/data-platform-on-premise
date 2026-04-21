@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sergiopassos/data-platform-on-premise
+    repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
     targetRevision: HEAD
     path: helm/chainlit
     helm:
