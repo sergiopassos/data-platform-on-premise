@@ -1,0 +1,20 @@
+# ArgoCD bootstrap manifest for KIND local cluster.
+# Run: kubectl apply -f gitops/bootstrap/argocd-install.yaml
+#
+# This installs ArgoCD via the official install manifest.
+# For a KIND/local cluster we override the server to run insecure (no TLS).
+#
+# Alternative (recommended): use Helm
+#   helm repo add argo https://argoproj.github.io/argo-helm
+#   helm install argocd argo/argo-cd -n argocd --create-namespace -f helm/argocd/values.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cmd-params-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"

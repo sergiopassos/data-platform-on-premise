@@ -1,0 +1,21 @@
+data_platform:
+  outputs:
+    prod:
+      type: trino
+      method: none
+      host: trino.serving.svc.cluster.local
+      port: 8080
+      database: iceberg
+      schema: silver
+      threads: 4
+      http_scheme: http
+    dev:
+      type: trino
+      method: none
+      host: localhost
+      port: 8081
+      database: iceberg
+      schema: silver
+      threads: 2
+      http_scheme: http
+  target: prod

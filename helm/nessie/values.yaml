@@ -1,0 +1,44 @@
+versionStoreType: ROCKSDB
+
+rocksdb:
+  databasePath: /rocksdb
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+
+replicaCount: 1
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 500m
+
+service:
+  type: ClusterIP
+  port: 19120
+
+catalog:
+  serviceConfig:
+    defaultWarehouse: warehouse
+    warehouseLocation: s3://warehouse/
+
+extraEnv:
+  - name: QUARKUS_S3_ENDPOINT_OVERRIDE
+    value: "http://minio.infra.svc.cluster.local:9000"
+  - name: QUARKUS_S3_AWS_REGION
+    value: "us-east-1"
+  - name: QUARKUS_S3_AWS_CREDENTIALS_TYPE
+    value: "static"
+  - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_ACCESS_KEY_ID
+    value: "minio"
+  - name: QUARKUS_S3_AWS_CREDENTIALS_STATIC_PROVIDER_SECRET_ACCESS_KEY
+    value: "minio123"
+  - name: NESSIE_CATALOG_DEFAULT_WAREHOUSE
+    value: "warehouse"
+  - name: NESSIE_CATALOG_WAREHOUSES__WAREHOUSE__LOCATION
+    value: "s3://warehouse/"

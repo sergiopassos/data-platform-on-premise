@@ -1,0 +1,56 @@
+replicaCount: 1
+
+image:
+  repository: data-platform/chainlit-portal
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 500m
+
+service:
+  type: ClusterIP
+  port: 8000
+
+env:
+  - name: OLLAMA_URL
+    value: "http://ollama.portal.svc.cluster.local:11434"
+  - name: KAFKA_CONNECT_URL
+    value: "http://kafka-connect.streaming.svc.cluster.local:8083"
+  - name: CONTRACTS_DIR
+    value: "/contracts"
+  - name: POSTGRES_HOST
+    valueFrom:
+      secretKeyRef:
+        name: postgres-source-secret
+        key: host
+  - name: POSTGRES_PORT
+    valueFrom:
+      secretKeyRef:
+        name: postgres-source-secret
+        key: port
+  - name: POSTGRES_DB
+    valueFrom:
+      secretKeyRef:
+        name: postgres-source-secret
+        key: dbname
+  - name: POSTGRES_USER
+    valueFrom:
+      secretKeyRef:
+        name: postgres-source-secret
+        key: user
+  - name: POSTGRES_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: postgres-source-secret
+        key: password
+
+persistence:
+  enabled: true
+  mountPath: /contracts
+  size: 1Gi

@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: silver
+    database: iceberg
+    schema: silver
+    description: Silver layer — deduplicated CDC data from Bronze
+    tables:
+      - name: orders
+        description: Orders table mirrored from PostgreSQL source via CDC
+        columns:
+          - name: order_id
+            description: Primary key
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+            tests:
+              - not_null
+          - name: status
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+          - name: _cdc_op
+            tests:
+              - not_null
+          - name: _ingested_at
+            tests:
+              - not_null
+
+      - name: customers
+        description: Customers table mirrored from PostgreSQL source via CDC
+        columns:
+          - name: customer_id
+            tests:
+              - not_null
+              - unique
+          - name: email
+            tests:
+              - not_null
+          - name: _ingested_at
+            tests:
+              - not_null

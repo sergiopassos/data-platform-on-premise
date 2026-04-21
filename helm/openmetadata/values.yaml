@@ -1,0 +1,28 @@
+replicaCount: 1
+
+openmetadata:
+  config:
+    authorizer:
+      enabled: false
+    authentication:
+      enabled: false
+    airflow:
+      enabled: false
+
+resources:
+  requests:
+    memory: 1.5Gi
+    cpu: 500m
+  limits:
+    memory: 3Gi
+    cpu: 2000m
+
+global:
+  airflow:
+    enabled: false
+
+deps:
+  mysql:
+    enabled: true
+  elasticsearch:
+    enabled: true

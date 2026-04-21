@@ -1,0 +1,38 @@
+replicaCount: 1
+
+image:
+  repository: ollama/ollama
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    memory: 4Gi
+    cpu: "2"
+  limits:
+    memory: 8Gi
+    cpu: "4"
+
+persistentVolume:
+  enabled: true
+  size: 20Gi
+  mountPath: /root/.ollama
+
+service:
+  type: ClusterIP
+  port: 11434
+
+env:
+  - name: OLLAMA_MODELS
+    value: /root/.ollama/models
+
+initContainers:
+  - name: pull-model
+    image: ollama/ollama:latest
+    command: ["sh", "-c", "ollama serve & sleep 5 && ollama pull llama3.2:3b && kill %1"]
+    env:
+      - name: OLLAMA_MODELS
+        value: /root/.ollama/models
+    volumeMounts:
+      - name: ollama-data
+        mountPath: /root/.ollama

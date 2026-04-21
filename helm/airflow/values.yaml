@@ -1,0 +1,91 @@
+executor: KubernetesExecutor
+
+images:
+  airflow:
+    repository: apache/airflow
+    tag: 2.9.3-python3.11
+    pullPolicy: IfNotPresent
+
+extraPipPackages:
+  - "astronomer-cosmos==1.5.0"
+  - "dbt-core==1.8.0"
+  - "dbt-trino==1.8.0"
+  - "apache-airflow-providers-cncf-kubernetes==8.4.1"
+  - "apache-airflow-providers-trino==5.7.0"
+
+dags:
+  persistence:
+    enabled: true
+    size: 2Gi
+  gitSync:
+    enabled: false
+
+logs:
+  persistence:
+    enabled: true
+    size: 5Gi
+
+webserver:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+
+scheduler:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+
+workers:
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+
+env:
+  - name: AIRFLOW_CONN_TRINO_DEFAULT
+    value: "trino://trino.serving.svc.cluster.local:8080/iceberg"
+  - name: AIRFLOW__CORE__FERNET_KEY
+    value: "data-platform-local-fernet-key-replace-in-prod=="
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "false"
+  - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+    value: "orchestration"
+
+extraVolumes:
+  - name: dbt-project
+    persistentVolumeClaim:
+      claimName: airflow-dbt-pvc
+
+extraVolumeMounts:
+  - name: dbt-project
+    mountPath: /opt/airflow/dbt
+
+podTemplate: |
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: placeholder
+  spec:
+    serviceAccountName: airflow-worker
+    containers:
+      - name: base
+        image: apache/airflow:2.9.3-python3.11
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: airflow-worker
+
+postgresql:
+  enabled: true
+
+redis:
+  enabled: false

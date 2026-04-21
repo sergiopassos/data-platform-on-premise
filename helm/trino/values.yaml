@@ -1,0 +1,47 @@
+image:
+  tag: "448"
+
+coordinator:
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: 2000m
+  jvm:
+    maxHeapSize: "3G"
+
+worker:
+  replicas: 1
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 4Gi
+      cpu: 2000m
+  jvm:
+    maxHeapSize: "3G"
+
+server:
+  workers: 1
+  config:
+    query.max-memory: "3GB"
+    query.max-memory-per-node: "1GB"
+
+additionalCatalogs:
+  iceberg: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://nessie.infra.svc.cluster.local:19120/iceberg
+    iceberg.file-format=PARQUET
+    fs.native-s3.enabled=true
+    s3.endpoint=http://minio.infra.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=minio
+    s3.aws-secret-key=minio123
+    s3.region=us-east-1
+
+serviceAccount:
+  create: true

@@ -1,0 +1,29 @@
+replicaCount: 1
+
+webhook:
+  enable: true
+  port: 8080
+
+sparkJobNamespaces:
+  - processing
+
+logLevel: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceAccounts:
+  spark:
+    create: true
+    name: spark
+
+rbac:
+  create: true
+
+controller:
+  workers: 10
