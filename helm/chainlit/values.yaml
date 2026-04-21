@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: data-platform/chainlit-portal
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Never
 
 resources:
   requests:

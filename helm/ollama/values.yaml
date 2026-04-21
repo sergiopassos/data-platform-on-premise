@@ -29,7 +29,7 @@ env:
 initContainers:
   - name: pull-model
     image: ollama/ollama:latest
-    command: ["sh", "-c", "ollama serve & sleep 5 && ollama pull llama3.2:3b && kill %1"]
+    command: ["sh", "-c", "ollama serve & SERVE_PID=$! && sleep 5 && ollama pull llama3.2:3b && kill $SERVE_PID || true"]
     env:
       - name: OLLAMA_MODELS
         value: /root/.ollama/models
