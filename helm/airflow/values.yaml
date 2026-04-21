@@ -86,6 +86,10 @@ serviceAccount:
 
 postgresql:
   enabled: true
+  image:
+    registry: docker.io
+    repository: bitnami/postgresql
+    tag: "16"
 
 redis:
   enabled: false
