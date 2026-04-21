@@ -9,15 +9,7 @@ spec:
   version: 3.7.0
   replicas: 1
   bootstrapServers: kafka-cluster-kafka-bootstrap:9092
-  build:
-    output:
-      type: docker
-      image: data-platform/kafka-connect-debezium:latest
-    plugins:
-      - name: debezium-postgres
-        artifacts:
-          - type: tgz
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgresql/2.6.2.Final/debezium-connector-postgresql-2.6.2.Final-plugin.tar.gz
+  image: quay.io/debezium/connect:2.6
   config:
     group.id: connect-cluster
     offset.storage.topic: connect-cluster-offsets
