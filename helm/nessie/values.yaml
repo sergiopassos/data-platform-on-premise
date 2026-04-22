@@ -2,7 +2,7 @@ versionStoreType: ROCKSDB
 
 rocksdb:
   storageClassName: standard
-  storageSize: 10Gi
+  storageSize: 1Gi
 
 replicaCount: 1
 
