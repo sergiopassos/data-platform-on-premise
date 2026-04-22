@@ -110,7 +110,7 @@ kubectl create secret generic postgres-source-secret \
 
 kubectl create secret generic airflow-git-ssh \
   -n orchestration \
-  --from-file=ssh="$SSH_KEY" \
+  --from-file=gitSshKey="$SSH_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic airflow-fernet-key \

@@ -91,7 +91,7 @@ podTemplate: |
         args:
           - |
             mkdir -p /root/.ssh
-            cp /etc/git-secret/ssh /root/.ssh/id_ed25519
+            cp /etc/git-secret/gitSshKey /root/.ssh/id_ed25519
             chmod 600 /root/.ssh/id_ed25519
             echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > /root/.ssh/known_hosts
             git clone --depth=1 --filter=blob:none --no-checkout \

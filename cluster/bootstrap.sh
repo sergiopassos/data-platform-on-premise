@@ -110,7 +110,7 @@ kubectl create secret generic postgres-source-secret \
 log "Creating Airflow secrets in orchestration namespace..."
 kubectl create secret generic airflow-git-ssh \
   -n orchestration \
-  --from-file=ssh="$SSH_KEY" \
+  --from-file=gitSshKey="$SSH_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Chart mounts this secret even when the key is passed via env:
