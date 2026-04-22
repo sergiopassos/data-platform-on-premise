@@ -22,9 +22,9 @@ Guia end-to-end para simular e observar o fluxo completo de dados: PostgreSQL �
 │   │                    MEDALLION LAYERS (Iceberg + Nessie)            │     │      │
 │   │                                                                   │     │      │
 │   │  BRONZE (Spark Streaming — 10s microbatch)                        │◄────┘      │
-│   │  ├── nessie.bronze.valid_{table}    ← registros válidos           │            │
-│   │  └── nessie.bronze.invalid_{table} ← registros inválidos         │            │
-│   │       s3://warehouse/bronze/                                      │            │
+│   │  ├── nessie.bronze.{table}_valid    ← registros válidos           │            │
+│   │  └── nessie.bronze.{table}_invalid ← registros inválidos         │            │
+│   │       s3://bronze/{table}/valid  e  s3://bronze/{table}/invalid   │            │
 │   │                    │                                              │            │
 │   │                    ▼ (Airflow @hourly)                            │            │
 │   │  SILVER (Spark Batch — MERGE INTO por PK)                         │            │
@@ -91,28 +91,34 @@ kubectl port-forward svc/postgres -n infra 5432:5432
 
 ## Passo 1 — Seed do PostgreSQL
 
-Popula as tabelas `customers` e `orders` com dados de exemplo:
+Popula as tabelas `customers` e `orders` com dados de exemplo.
+
+> `psql` não está instalado localmente — use `kubectl exec` para acessar o pod diretamente.
 
 ```bash
-POSTGRES_HOST=localhost \
-POSTGRES_PORT=5432 \
-POSTGRES_DB=sourcedb \
-POSTGRES_USER=postgres \
-POSTGRES_PASSWORD=postgres \
-bash scripts/seed-postgres.sh 100
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
+  -c "CREATE TABLE IF NOT EXISTS customers (customer_id SERIAL PRIMARY KEY, email VARCHAR(255) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT NOW());" \
+  -c "CREATE TABLE IF NOT EXISTS orders (order_id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(customer_id), status VARCHAR(50) NOT NULL DEFAULT 'pending', amount NUMERIC(10,2) NOT NULL, created_at TIMESTAMP DEFAULT NOW());" \
+  -c "INSERT INTO customers (email, name) SELECT 'customer_' || i || '@example.com', 'Customer ' || i FROM generate_series(1, 100) AS i ON CONFLICT DO NOTHING;" \
+  -c "INSERT INTO orders (customer_id, status, amount) SELECT (i % 100) + 1, CASE (i % 5) WHEN 0 THEN 'pending' WHEN 1 THEN 'processing' WHEN 2 THEN 'shipped' WHEN 3 THEN 'delivered' ELSE 'cancelled' END, (RANDOM() * 1000)::NUMERIC(10,2) FROM generate_series(1, 100) AS i;"
 ```
 
 **Verificar os dados inseridos:**
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb \
-  -c "SELECT COUNT(*) FROM customers; SELECT COUNT(*) FROM orders;"
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
+  -c "SELECT 'customers' as tabela, COUNT(*) as total FROM customers UNION ALL SELECT 'orders', COUNT(*) FROM orders;"
 ```
 
-**Explorar as tabelas:**
+**Explorar as tabelas interativamente:**
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb
 ```
 
 ```sql
@@ -129,27 +135,11 @@ SHOW wal_level;
 
 ---
 
-## Passo 2 — Ativar CDC via Portal Chainlit
+## Passo 2 — Ativar CDC (via curl)
 
-O portal Chainlit automatiza:
-1. Introspecção do schema do PostgreSQL
-2. Geração do contrato ODCS via Ollama (llama3.2:3b)
-3. Criação do conector Debezium no Kafka Connect
-4. Upload do contrato para o MinIO
+> O portal Chainlit pode ser usado para gerar contratos ODCS via Ollama, mas a ativação do CDC pode ser feita diretamente via curl.
 
-Acesse **http://localhost:8000** e siga o fluxo:
-
-```
-Você: customers
-Portal: Inspecionando schema...
-Portal: Gerando contrato ODCS...
-Portal: Ativando conector Debezium...
-Portal: CDC ativo para customers! Tópico: cdc.public.customers
-```
-
-Repita para `orders`.
-
-**Alternativa manual via curl** (sem o portal):
+**Criar os conectores Debezium:**
 
 ```bash
 # Criar conector para customers
@@ -209,31 +199,51 @@ curl -s http://localhost:8083/connectors/debezium-public-customers/status | jq .
 
 O status esperado é `"state": "RUNNING"`.
 
+**Importante — adicionar `customers` à publication do Debezium** (necessário quando os dois conectores compartilham a mesma publication):
+
+```bash
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
+  -c "ALTER PUBLICATION dbz_publication ADD TABLE customers;" \
+  -c "SELECT pubname, schemaname, tablename FROM pg_publication_tables;"
+```
+
+Verificar e restartar o conector após adicionar à publication:
+
+```bash
+curl -s -X POST http://localhost:8083/connectors/debezium-public-customers/restart
+curl -s http://localhost:8083/connectors/debezium-public-customers/status | jq '.connector.state'
+```
+
 ---
 
 ## Passo 3 — Observar Mensagens no Kafka
 
-Consuma mensagens do tópico CDC diretamente de um pod Kafka:
-
 ```bash
-# Acessar o pod do Kafka
 KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 
-# Consumir mensagens do tópico customers (desde o início)
+# Verificar quantas mensagens existem no tópico (offset atual)
+kubectl exec -n streaming $KAFKA_POD -- \
+  bin/kafka-get-offsets.sh \
+  --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
+  --topic cdc.public.customers
+
+# Consumir mensagens em tempo real (sem --from-beginning — só novas mensagens)
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-console-consumer.sh \
   --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
   --topic cdc.public.customers \
-  --from-beginning \
-  --max-messages 5
+  --timeout-ms 30000
 
-# Consumir mensagens do tópico orders
+# Ler a partir de um offset específico (ex: offset 100 em diante)
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-console-consumer.sh \
   --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
-  --topic cdc.public.orders \
-  --from-beginning \
-  --max-messages 5
+  --topic cdc.public.customers \
+  --partition 0 \
+  --offset 100 \
+  --max-messages 10 \
+  --timeout-ms 8000
 
 # Listar todos os tópicos CDC
 kubectl exec -n streaming $KAFKA_POD -- \
@@ -242,22 +252,25 @@ kubectl exec -n streaming $KAFKA_POD -- \
   --list | grep cdc
 ```
 
-**Exemplo de mensagem CDC (INSERT):**
+**Formato da mensagem CDC** — os dados ficam dentro de `.payload`, não na raiz:
 ```json
 {
-  "before": null,
-  "after": {
-    "customer_id": 1,
-    "email": "customer_1@example.com",
-    "name": "Customer 1",
-    "created_at": "2026-04-22T10:00:00Z"
-  },
-  "op": "c",
-  "ts_ms": 1745316000000
+  "payload": {
+    "before": null,
+    "after": {
+      "customer_id": 1,
+      "email": "customer_1@example.com",
+      "name": "Cliente Atualizado"
+    },
+    "op": "u",
+    "source": { "table": "customers", "lsn": 26950160 }
+  }
 }
 ```
 
-Onde `"op"` pode ser: `c` (create/insert), `u` (update), `d` (delete), `r` (read/snapshot).
+Onde `"op"` pode ser: `c` (insert), `u` (update), `d` (delete), `r` (snapshot inicial).
+
+> **Nota:** `before` é `null` em updates porque a tabela usa `REPLICA IDENTITY DEFAULT`. Para ter o valor anterior, execute: `ALTER TABLE customers REPLICA IDENTITY FULL;`
 
 ---
 
@@ -267,18 +280,19 @@ Faça alterações no PostgreSQL e observe-as chegando no Kafka em tempo real:
 
 **Terminal 1 — Consumidor Kafka em tempo real:**
 ```bash
-KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka-kafka -o jsonpath='{.items[0].metadata.name}')
+KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-console-consumer.sh \
   --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
   --topic cdc.public.customers \
-  --from-beginning
+  --timeout-ms 60000
 ```
 
 **Terminal 2 — Fazer alterações no PostgreSQL:**
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb
 ```
 
 ```sql
@@ -316,7 +330,27 @@ Cada operação gera imediatamente uma mensagem no Kafka.
 
 ## Passo 5 — Bronze Layer: Kafka → MinIO/Iceberg
 
-O job Spark Streaming consome os tópicos `cdc.public.*` e escreve no Iceberg.
+O job Spark Streaming consome os tópicos `cdc.public.*` e escreve no Iceberg (MinIO).
+
+**Pré-requisitos — bucket e script devem existir no MinIO:**
+
+```bash
+# 1. Criar o bucket warehouse (se não existir)
+kubectl exec -n infra deployment/minio -- mc alias set local http://localhost:9000 minio minio123
+kubectl exec -n infra deployment/minio -- mc mb local/warehouse 2>/dev/null || echo "bucket já existe"
+
+# 2. Verificar se o script está no bucket
+kubectl exec -n infra deployment/minio -- mc ls local/warehouse/jars/
+
+# Se não estiver, fazer upload:
+CONTENT=$(base64 -w0 spark/jobs/bronze_streaming.py)
+kubectl exec -n infra deployment/minio -- sh -c "
+  echo '$CONTENT' | base64 -d > /tmp/bronze_streaming.py &&
+  mc cp /tmp/bronze_streaming.py local/warehouse/jars/bronze_streaming.py
+"
+```
+
+> O job baixa os JARs (Iceberg, Nessie, Kafka, Hadoop-AWS) do Maven na primeira execução — pode levar alguns minutos.
 
 **Verificar se o job está rodando:**
 ```bash
@@ -324,7 +358,7 @@ kubectl get sparkapplication -n processing
 kubectl get pods -n processing
 ```
 
-**Se o job não estiver rodando, inicie manualmente:**
+**Iniciar o job:**
 ```bash
 kubectl apply -f spark/applications/bronze-streaming-app.yaml
 ```
@@ -339,37 +373,46 @@ kubectl logs -n processing $DRIVER_POD -f
 
 Acesse o MinIO Console em **http://localhost:9001** (minio / minio123):
 
-- Navegue em: `warehouse` → `bronze` → `valid_customers` / `valid_orders`
-- Os arquivos Parquet serão visíveis particionados por data de ingestão
+- Navegue em: bucket `bronze` → `customers` → `valid` / `invalid`
+- Bucket separado do `warehouse` — os arquivos Parquet ficam particionados por `_ingested_at_day=YYYY-MM-DD`
 
-**Verificar via Trino:**
+**Verificar via Trino CLI (recomendado):**
+
+> **DBeaver — erro "Unable to process:"**: O DBeaver falha na navegação da árvore de schemas/tabelas contra o Trino com catálogo Iceberg REST (Nessie), mas o SQL direto funciona. Use sempre o **SQL Editor** do DBeaver ou a CLI abaixo, **não** tente expandir as tabelas pelo tree de objetos.
+>
+> No DBeaver: defina `Catalog = iceberg` e `Schema = bronze` na aba de conexão, depois abra um SQL Editor (Ctrl+]) e execute as queries diretamente.
+
 ```bash
-# Conectar ao Trino via CLI
+# Conectar ao Trino via CLI (dentro do pod)
 kubectl exec -it deployment/trino-coordinator -n serving -- trino
-
--- Ou via REST
-curl -s -X POST http://localhost:8082/v1/statement \
-  -H "X-Trino-User: trino" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "SELECT COUNT(*) FROM iceberg.bronze.valid_customers"}'
 ```
 
 ```sql
--- Via Trino CLI (dentro do pod)
+-- Listar schemas do catálogo iceberg
 SHOW SCHEMAS FROM iceberg;
 
 -- Ver tabelas Bronze
 SHOW TABLES FROM iceberg.bronze;
 
--- Contar registros no Bronze
-SELECT COUNT(*) FROM iceberg.bronze.valid_customers;
-SELECT COUNT(*) FROM iceberg.bronze.valid_orders;
+-- Contar registros válidos no Bronze
+SELECT COUNT(*) FROM iceberg.bronze.customers_valid;
+SELECT COUNT(*) FROM iceberg.bronze.orders_valid;
 
--- Ver últimas ingestões
-SELECT customer_id, email, _cdc_op, _ingested_at
-FROM iceberg.bronze.valid_customers
+-- Ver registros inválidos (falha de contrato)
+SELECT COUNT(*) FROM iceberg.bronze.customers_invalid;
+SELECT COUNT(*) FROM iceberg.bronze.orders_invalid;
+
+-- Inspecionar os dados brutos (JSON do CDC)
+SELECT _source_topic, _cdc_op, _ingested_at,
+       json_extract_scalar(_raw_value, '$.after.email') AS email
+FROM iceberg.bronze.customers_valid
 ORDER BY _ingested_at DESC
 LIMIT 10;
+
+-- Ver distribuição de operações CDC
+SELECT _cdc_op, COUNT(*) AS total
+FROM iceberg.bronze.orders_valid
+GROUP BY _cdc_op;
 ```
 
 ---
@@ -467,11 +510,12 @@ LIMIT 10;
 
 ```bash
 # 1. Inserir um novo cliente no PostgreSQL
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb \
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
   -c "INSERT INTO customers (email, name) VALUES ('teste@cdc.com', 'Teste CDC') RETURNING customer_id;"
 
 # 2. Verificar no Kafka (aguardar alguns segundos)
-KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka-kafka -o jsonpath='{.items[0].metadata.name}')
+KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-console-consumer.sh \
   --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
@@ -495,15 +539,16 @@ kubectl exec -n orchestration deployment/airflow-webserver -- \
 ### Monitorar latência end-to-end
 
 ```sql
--- No Trino: comparar timestamp do evento CDC com a ingestão Bronze
+-- No Trino: localizar o registro pelo JSON bruto e ver latência de ingestão
 SELECT
-  customer_id,
-  email,
+  _cdc_op,
   _cdc_ts,
   _ingested_at,
-  CAST(_ingested_at AS TIMESTAMP) - CAST(_cdc_ts AS TIMESTAMP) AS latency
-FROM iceberg.bronze.valid_customers
-WHERE email = 'teste@cdc.com';
+  (_ingested_at - _cdc_ts) AS latency,
+  json_extract_scalar(_raw_value, '$.after.email') AS email
+FROM iceberg.bronze.customers_valid
+WHERE json_extract_scalar(_raw_value, '$.after.email') = 'teste@cdc.com'
+ORDER BY _ingested_at DESC;
 ```
 
 ---
@@ -517,7 +562,7 @@ WHERE email = 'teste@cdc.com';
 kubectl get pods -A | grep -v Running | grep -v Completed
 
 # Status dos Kafka topics
-KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka-kafka -o jsonpath='{.items[0].metadata.name}')
+KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-topics.sh \
   --bootstrap-server kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
@@ -590,12 +635,14 @@ argocd app sync airflow --server localhost:8090 --insecure
 ### Debezium: slot de replicação bloqueado
 
 ```bash
+POSTGRES_POD=$(kubectl get pod -n infra -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+
 # Verificar slots ativos no PostgreSQL
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb \
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
   -c "SELECT slot_name, active, restart_lsn FROM pg_replication_slots;"
 
 # Dropar slot se necessário (reinicia o CDC do início)
-PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sourcedb \
+kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
   -c "SELECT pg_drop_replication_slot('debezium_customers');"
 ```
 
@@ -614,7 +661,7 @@ kubectl apply -f spark/applications/bronze-streaming-app.yaml
 
 ```bash
 # Verificar offset do tópico
-KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka-kafka -o jsonpath='{.items[0].metadata.name}')
+KAFKA_POD=$(kubectl get pod -n streaming -l strimzi.io/name=kafka-cluster-kafka -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n streaming $KAFKA_POD -- \
   bin/kafka-run-class.sh kafka.tools.GetOffsetShell \
   --broker-list kafka-cluster-kafka-bootstrap.streaming.svc.cluster.local:9092 \
@@ -690,7 +737,7 @@ kubectl run mc --image=minio/mc --rm -it --restart=Never -- \
 | Status conectores | `curl -s http://localhost:8083/connectors \| jq .` |
 | Trigger Silver | `airflow dags trigger silver_processing_dag` |
 | Trigger Gold | `airflow dags trigger gold_dbt_dag` |
-| Query Bronze | `SELECT COUNT(*) FROM iceberg.bronze.valid_customers` |
+| Query Bronze | `SELECT COUNT(*) FROM iceberg.bronze.customers_valid` |
 | Query Silver | `SELECT COUNT(*) FROM iceberg.silver.customers` |
 | Query Gold | `SELECT * FROM iceberg.gold.orders_summary` |
 | Ver jobs Spark | `kubectl get sparkapplication -n processing` |

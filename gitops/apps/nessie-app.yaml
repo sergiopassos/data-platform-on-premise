@@ -10,7 +10,7 @@ spec:
   sources:
     - repoURL: https://charts.projectnessie.org
       chart: nessie
-      targetRevision: "0.80.0"
+      targetRevision: "0.107.5"
       helm:
         valueFiles:
           - $values/helm/nessie/values.yaml

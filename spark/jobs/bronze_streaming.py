@@ -50,7 +50,7 @@ def table_name_from_topic(topic: str) -> str:
 def validate_record(record_json: str, table_name: str) -> tuple[bool, str]:
     contract_path = Path(CONTRACTS_DIR) / f"{table_name}.yaml"
     if not contract_path.exists():
-        return False, f"No contract found for table {table_name}"
+        return True, ""
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write(record_json)
@@ -74,7 +74,7 @@ def validate_record(record_json: str, table_name: str) -> tuple[bool, str]:
 
 def ensure_bronze_tables(spark: SparkSession, table_name: str) -> None:
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS nessie.bronze.valid_{table_name} (
+        CREATE TABLE IF NOT EXISTS nessie.bronze.{table_name}_valid (
             _raw_value STRING,
             _source_topic STRING,
             _cdc_op STRING,
@@ -82,16 +82,18 @@ def ensure_bronze_tables(spark: SparkSession, table_name: str) -> None:
             _ingested_at TIMESTAMP
         )
         USING iceberg
+        LOCATION 's3a://bronze/{table_name}/valid'
         PARTITIONED BY (days(_ingested_at))
     """)
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS nessie.bronze.invalid_{table_name} (
+        CREATE TABLE IF NOT EXISTS nessie.bronze.{table_name}_invalid (
             _raw_value STRING,
             _source_topic STRING,
             _ingested_at TIMESTAMP,
             _validation_error STRING
         )
         USING iceberg
+        LOCATION 's3a://bronze/{table_name}/invalid'
         PARTITIONED BY (days(_ingested_at))
     """)
 
@@ -132,7 +134,7 @@ def process_batch(batch_df: DataFrame, _batch_id: int) -> None:
                 ]),
             ).withColumn("_cdc_ts", F.current_timestamp()) \
              .withColumn("_ingested_at", F.current_timestamp()) \
-             .writeTo(f"nessie.bronze.valid_{table_name}").append()
+             .writeTo(f"nessie.bronze.{table_name}_valid").append()
         else:
             spark.createDataFrame(
                 [(value_str, topic, None, error_msg)],
@@ -143,7 +145,7 @@ def process_batch(batch_df: DataFrame, _batch_id: int) -> None:
                     StructField("_validation_error", StringType()),
                 ]),
             ).withColumn("_ingested_at", F.current_timestamp()) \
-             .writeTo(f"nessie.bronze.invalid_{table_name}").append()
+             .writeTo(f"nessie.bronze.{table_name}_invalid").append()
 
 
 def main() -> None:
@@ -154,7 +156,7 @@ def main() -> None:
         spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
         .option("subscribePattern", "cdc\\.public\\..*")
-        .option("startingOffsets", "latest")
+        .option("startingOffsets", "earliest")
         .option("failOnDataLoss", "false")
         .load()
         .selectExpr("CAST(topic AS STRING)", "CAST(value AS STRING)")

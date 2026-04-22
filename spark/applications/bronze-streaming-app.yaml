@@ -44,12 +44,13 @@ spec:
     memory: "1g"
     serviceAccount: spark
     initContainers:
-      - name: fetch-contracts
+      - name: setup-buckets-and-contracts
         image: minio/mc:RELEASE.2024-01-13T08-44-48Z
         command: ["/bin/sh", "-c"]
         args:
           - |
             mc alias set minio http://minio.infra.svc.cluster.local:9000 minio minio123 --insecure &&
+            mc mb --ignore-existing minio/bronze &&
             mc cp --recursive minio/warehouse/contracts/ /contracts/ || true
         volumeMounts:
           - name: contracts
