@@ -151,6 +151,19 @@ kubectl wait pod/airflow-db-migrate -n orchestration \
   --for=condition=Ready=false --timeout=120s
 kubectl delete pod airflow-db-migrate -n orchestration
 
+# ArgoCD skips the create-user Helm hook job, so create the user manually.
+log "Creating Airflow admin user..."
+kubectl rollout status deployment/airflow-webserver -n orchestration --timeout=180s
+WEBSERVER_POD=$(kubectl get pod -l "app.kubernetes.io/name=webserver,app.kubernetes.io/instance=airflow" \
+  -n orchestration -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
+  --username admin \
+  --firstname Admin \
+  --lastname User \
+  --role Admin \
+  --email admin@example.com \
+  --password admin
+
 log ""
 log "Bootstrap complete. ArgoCD will now reconcile all platform components."
 log ""

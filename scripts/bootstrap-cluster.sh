@@ -165,6 +165,20 @@ kubectl rollout status deployment/airflow-scheduler deployment/airflow-webserver
 # Triggerer StatefulSet may be in backoff; delete pod to force clean restart
 kubectl delete pod airflow-triggerer-0 -n orchestration 2>/dev/null || true
 
+# ── 12. Airflow admin user ────────────────────────────────────────────────────
+# ArgoCD skips the create-user Helm hook job, so create the user manually.
+log "Step 12: Creating Airflow admin user..."
+kubectl rollout status deployment/airflow-webserver -n orchestration --timeout=180s
+WEBSERVER_POD=$(kubectl get pod -l "app.kubernetes.io/name=webserver,app.kubernetes.io/instance=airflow" \
+  -n orchestration -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
+  --username admin \
+  --firstname Admin \
+  --lastname User \
+  --role Admin \
+  --email admin@example.com \
+  --password admin
+
 log ""
 log "=== Bootstrap Complete ==="
 log "ArgoCD is reconciling all platform components."
