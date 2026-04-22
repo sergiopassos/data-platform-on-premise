@@ -1,5 +1,8 @@
 versionStoreType: ROCKSDB
 
+deploymentStrategy:
+  type: Recreate
+
 rocksdb:
   storageClassName: standard
   storageSize: 1Gi
