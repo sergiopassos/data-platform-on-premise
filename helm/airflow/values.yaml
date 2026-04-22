@@ -13,7 +13,7 @@ extraPipPackages:
   - "apache-airflow-providers-cncf-kubernetes==8.4.1"
   - "apache-airflow-providers-trino==5.7.0"
 
-# ── DAGs — synced from Git via sidecar ────────────────────────────────
+# ── DAGs — synced from Git via git-sync sidecar ───────────────────────────────
 dags:
   persistence:
     enabled: true
@@ -24,26 +24,13 @@ dags:
     branch: main
     subPath: dags
     wait: 60
-    # Secret must have key 'gitSshKey' — created by bootstrap.sh
     sshKeySecret: airflow-git-ssh
+    knownHosts: |
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 
 logs:
   persistence:
     enabled: false
-
-# ── dbt project — populated by initContainer on scheduler start ────────
-extraVolumes:
-  - name: dbt-project
-    persistentVolumeClaim:
-      claimName: airflow-dbt-pvc
-  - name: git-ssh
-    secret:
-      secretName: airflow-git-ssh
-      defaultMode: 0400
-
-extraVolumeMounts:
-  - name: dbt-project
-    mountPath: /opt/airflow/dbt
 
 scheduler:
   resources:
@@ -52,31 +39,13 @@ scheduler:
       cpu: 500m
     limits:
       memory: 2Gi
-  # Clone dbt/ from Git into the PVC once at pod start
-  extraInitContainers:
-    - name: git-clone-dbt
-      image: alpine/git:2.43.0
-      command:
-        - sh
-        - -c
-        - |
-          mkdir -p /root/.ssh
-          cp /git-ssh/gitSshKey /root/.ssh/id_ed25519
-          chmod 600 /root/.ssh/id_ed25519
-          ssh-keyscan -H github.com >> /root/.ssh/known_hosts 2>/dev/null
-          git clone --depth=1 --filter=blob:none --no-checkout \
-            git@github.com:sergiopassos/data-platform-on-premise.git /tmp/repo
-          cd /tmp/repo
-          git sparse-checkout init --cone
-          git sparse-checkout set dbt
-          git checkout
-          cp -rT /tmp/repo/dbt /opt/airflow/dbt
-          echo "dbt project synced to /opt/airflow/dbt"
-      volumeMounts:
-        - name: dbt-project
-          mountPath: /opt/airflow/dbt
-        - name: git-ssh
-          mountPath: /git-ssh
+  # git-sync-ssh-key must be declared explicitly — chart 1.15.0 does not
+  # auto-inject this volume into spec.volumes despite referencing it in mounts.
+  extraVolumes:
+    - name: git-sync-ssh-key
+      secret:
+        secretName: airflow-git-ssh
+        defaultMode: 0400
 
 webserver:
   resources:
@@ -85,6 +54,11 @@ webserver:
       cpu: 500m
     limits:
       memory: 2Gi
+  extraVolumes:
+    - name: git-sync-ssh-key
+      secret:
+        secretName: airflow-git-ssh
+        defaultMode: 0400
 
 workers:
   resources:
@@ -100,6 +74,9 @@ env:
   - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
     value: "orchestration"
 
+# ── Worker pod template ───────────────────────────────────────────────────────
+# KubernetesExecutor creates one pod per task. dbt is cloned fresh via
+# initContainer so each worker has its own copy (avoids RWO PVC sharing).
 podTemplate: |
   apiVersion: v1
   kind: Pod
@@ -107,9 +84,41 @@ podTemplate: |
     name: placeholder
   spec:
     serviceAccountName: airflow-worker
+    initContainers:
+      - name: git-clone-dbt
+        image: alpine/git:2.43.0
+        command: [sh, -c]
+        args:
+          - |
+            mkdir -p /root/.ssh
+            cp /etc/git-secret/ssh /root/.ssh/id_ed25519
+            chmod 600 /root/.ssh/id_ed25519
+            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > /root/.ssh/known_hosts
+            git clone --depth=1 --filter=blob:none --no-checkout \
+              git@github.com:sergiopassos/data-platform-on-premise.git /tmp/repo
+            cd /tmp/repo && git sparse-checkout init --cone
+            git sparse-checkout set dbt && git checkout
+            cp -rT /tmp/repo/dbt /opt/airflow/dbt
+            echo "dbt synced to /opt/airflow/dbt"
+        volumeMounts:
+          - name: dbt-project
+            mountPath: /opt/airflow/dbt
+          - name: git-ssh
+            mountPath: /etc/git-secret
+            readOnly: true
     containers:
       - name: base
         image: apache/airflow:2.9.3-python3.11
+        volumeMounts:
+          - name: dbt-project
+            mountPath: /opt/airflow/dbt
+    volumes:
+      - name: dbt-project
+        emptyDir: {}
+      - name: git-ssh
+        secret:
+          secretName: airflow-git-ssh
+          defaultMode: 0400
 
 rbac:
   create: true
