@@ -13,26 +13,72 @@ extraPipPackages:
   - "apache-airflow-providers-cncf-kubernetes==8.4.1"
   - "apache-airflow-providers-trino==5.7.0"
 
+# ── DAGs — synced from Git via sidecar ────────────────────────────────
 dags:
   persistence:
     enabled: true
     size: 2Gi
   gitSync:
-    enabled: false
+    enabled: true
+    repo: git@github.com:sergiopassos/data-platform-on-premise.git
+    branch: main
+    subPath: dags
+    wait: 60
+    # Secret must have key 'gitSshKey' — created by bootstrap.sh
+    sshKeySecret: airflow-git-ssh
 
 logs:
   persistence:
     enabled: false
 
-webserver:
+# ── dbt project — populated by initContainer on scheduler start ────────
+extraVolumes:
+  - name: dbt-project
+    persistentVolumeClaim:
+      claimName: airflow-dbt-pvc
+  - name: git-ssh
+    secret:
+      secretName: airflow-git-ssh
+      defaultMode: 0400
+
+extraVolumeMounts:
+  - name: dbt-project
+    mountPath: /opt/airflow/dbt
+
+scheduler:
   resources:
     requests:
       memory: 1Gi
       cpu: 500m
     limits:
       memory: 2Gi
+  # Clone dbt/ from Git into the PVC once at pod start
+  extraInitContainers:
+    - name: git-clone-dbt
+      image: alpine/git:2.43.0
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /root/.ssh
+          cp /git-ssh/gitSshKey /root/.ssh/id_ed25519
+          chmod 600 /root/.ssh/id_ed25519
+          ssh-keyscan -H github.com >> /root/.ssh/known_hosts 2>/dev/null
+          git clone --depth=1 --filter=blob:none --no-checkout \
+            git@github.com:sergiopassos/data-platform-on-premise.git /tmp/repo
+          cd /tmp/repo
+          git sparse-checkout init --cone
+          git sparse-checkout set dbt
+          git checkout
+          cp -rT /tmp/repo/dbt /opt/airflow/dbt
+          echo "dbt project synced to /opt/airflow/dbt"
+      volumeMounts:
+        - name: dbt-project
+          mountPath: /opt/airflow/dbt
+        - name: git-ssh
+          mountPath: /git-ssh
 
-scheduler:
+webserver:
   resources:
     requests:
       memory: 1Gi
@@ -49,21 +95,10 @@ workers:
 env:
   - name: AIRFLOW_CONN_TRINO_DEFAULT
     value: "trino://trino.serving.svc.cluster.local:8080/iceberg"
-  - name: AIRFLOW__CORE__FERNET_KEY
-    value: "data-platform-local-fernet-key-replace-in-prod=="
   - name: AIRFLOW__CORE__LOAD_EXAMPLES
     value: "false"
   - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
     value: "orchestration"
-
-extraVolumes:
-  - name: dbt-project
-    persistentVolumeClaim:
-      claimName: airflow-dbt-pvc
-
-extraVolumeMounts:
-  - name: dbt-project
-    mountPath: /opt/airflow/dbt
 
 podTemplate: |
   apiVersion: v1

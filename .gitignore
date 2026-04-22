@@ -27,3 +27,5 @@ kubeconfig
 
 # OS
 .DS_Store
+temp.txt
+secret-backup.yaml

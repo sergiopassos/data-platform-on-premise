@@ -7,7 +7,6 @@ ARGOCD_NS="argocd"
 SSH_KEY="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
 REGISTRY_NAME="kind-registry"
 REGISTRY_PORT="5001"
-REGISTRY_IMAGE="172.18.0.5:5000"
 
 log() { echo "[bootstrap] $*"; }
 
@@ -107,14 +106,50 @@ kubectl create secret generic postgres-source-secret \
   --dry-run=client -o yaml \
   | kubectl apply -f -
 
-# ── 9. Chainlit portal image (local build) ────────────────────────────────────
+# ── 9. Airflow secrets + DB migration ────────────────────────────────────────
+log "Creating Airflow secrets in orchestration namespace..."
+kubectl create secret generic airflow-git-ssh \
+  -n orchestration \
+  --from-file=gitSshKey="$SSH_KEY" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Chart mounts this secret even when the key is passed via env:
+kubectl create secret generic airflow-fernet-key \
+  -n orchestration \
+  --from-literal=fernet-key="${AIRFLOW_FERNET_KEY:-data-platform-local-fernet-key-replace-in-prod==}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# ── 10. Chainlit portal image (local build) ───────────────────────────────────
 log "Building and loading chainlit-portal image into KIND..."
 docker build -t data-platform/chainlit-portal:latest portal/
 kind load docker-image data-platform/chainlit-portal:latest --name "$CLUSTER_NAME"
 
-# ── 10. Root App ──────────────────────────────────────────────────────────────
+# ── 11. Root App ──────────────────────────────────────────────────────────────
 log "Applying root app (App of Apps)..."
 kubectl apply -f gitops/bootstrap/root-app.yaml
+
+# ── 12. Airflow DB migration ──────────────────────────────────────────────────
+# ArgoCD does not execute Helm pre-install hook Jobs, so we run the migration
+# manually after waiting for the Airflow PostgreSQL pod to be ready.
+log "Waiting for Airflow PostgreSQL to be ready..."
+kubectl wait pod \
+  -l "app.kubernetes.io/name=postgresql,app.kubernetes.io/instance=airflow" \
+  -n orchestration \
+  --for=condition=Ready \
+  --timeout=300s
+
+log "Running Airflow DB migration..."
+kubectl run airflow-db-migrate \
+  --image=apache/airflow:2.9.3-python3.11 \
+  --restart=Never \
+  --env="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://postgres:postgres@airflow-postgresql.orchestration:5432/postgres?sslmode=disable" \
+  --env="AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-data-platform-local-fernet-key-replace-in-prod==}" \
+  --env="AIRFLOW__CORE__LOAD_EXAMPLES=false" \
+  -n orchestration \
+  -- airflow db migrate
+kubectl wait pod/airflow-db-migrate -n orchestration \
+  --for=condition=Ready=false --timeout=120s
+kubectl delete pod airflow-db-migrate -n orchestration
 
 log ""
 log "Bootstrap complete. ArgoCD will now reconcile all platform components."
@@ -124,3 +159,6 @@ log "  UI:       kubectl port-forward svc/argocd-server -n argocd 8090:80"
 log "            http://localhost:8090  (admin / see below)"
 log "  Password: kubectl -n argocd get secret argocd-initial-admin-secret \\"
 log "              -o jsonpath='{.data.password}' | base64 -d"
+log ""
+log "  Airflow:  kubectl port-forward svc/airflow-webserver -n orchestration 8081:8080"
+log "            http://localhost:8081  (admin / admin)"

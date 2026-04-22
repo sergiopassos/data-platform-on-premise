@@ -1,0 +1,14 @@
+---
+# dbt project volume — mounted at /opt/airflow/dbt in Airflow pods
+# Populated by initContainer (git clone) on scheduler startup
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-dbt-pvc
+  namespace: orchestration
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

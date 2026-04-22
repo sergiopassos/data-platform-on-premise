@@ -7,16 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://strimzi.io/charts/
-    chart: strimzi-kafka-operator
-    targetRevision: "0.41.0"
-    helm:
-      parameters:
-        - name: watchNamespaces[0]
-          value: streaming
-        - name: watchAnyNamespace
-          value: "false"
+  sources:
+    - repoURL: https://strimzi.io/charts/
+      chart: strimzi-kafka-operator
+      targetRevision: "0.41.0"
+      helm:
+        valueFiles:
+          - $values/helm/strimzi/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: streaming

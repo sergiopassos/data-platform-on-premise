@@ -10,8 +10,18 @@ Flow:
 import os
 from pathlib import Path
 
+import boto3
 import chainlit as cl
 import yaml
+
+_s3 = boto3.client(
+    "s3",
+    endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio.infra.svc.cluster.local:9000"),
+    aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minio"),
+    aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minio123"),
+)
+_CONTRACTS_BUCKET = os.getenv("CONTRACTS_BUCKET", "warehouse")
+_CONTRACTS_PREFIX = os.getenv("CONTRACTS_PREFIX", "contracts")
 
 from agent.connector_activator import ConnectorActivator, PostgresConfig
 from agent.odcs_generator import ODCSGenerator
@@ -85,10 +95,14 @@ async def handle_message(message: cl.Message) -> None:
     contract = _generator.generate(table_name, columns)
 
     contract_path = _CONTRACTS_DIR / f"{table_name}.yaml"
-    contract_path.write_text(yaml.dump(contract, default_flow_style=False, allow_unicode=True))
+    contract_yaml = yaml.dump(contract, default_flow_style=False, allow_unicode=True)
+    contract_path.write_text(contract_yaml)
+
+    s3_key = f"{_CONTRACTS_PREFIX}/{table_name}.yaml"
+    _s3.put_object(Bucket=_CONTRACTS_BUCKET, Key=s3_key, Body=contract_yaml.encode())
 
     await cl.Message(
-        content=f"Contrato gerado e salvo em `{contract_path}`.\n\n```yaml\n{yaml.dump(contract)}\n```"
+        content=f"Contrato gerado e salvo em `{contract_path}` e `s3://{_CONTRACTS_BUCKET}/{s3_key}`.\n\n```yaml\n{yaml.dump(contract)}\n```"
     ).send()
 
     await cl.Message(content="Ativando connector Debezium via KafkaConnect...").send()

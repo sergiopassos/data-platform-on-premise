@@ -1,16 +1,15 @@
-"""Airflow DAG: Silver → Gold via dbt + Cosmos.
+"""Airflow DAG: Silver → Gold via dbt + Cosmos (LOCAL execution mode).
 
 Uses astronomer-cosmos DbtDag to automatically discover and run
 all dbt models in the gold/ directory via the Trino adapter.
+dbt project is mounted at /opt/airflow/dbt via airflow-dbt-pvc.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow.sensors.external_task import ExternalTaskSensor
-from cosmos import DbtDag, ProjectConfig, ProfileConfig, RenderConfig, LoadMode
-from cosmos.profiles import TrinoTokenProfileMapping
+from cosmos import DbtDag, ProjectConfig, ProfileConfig, RenderConfig, LoadMode, ExecutionConfig, ExecutionMode
 
 DBT_PROJECT_PATH = Path("/opt/airflow/dbt")
 DBT_PROFILES_PATH = DBT_PROJECT_PATH / "profiles"
@@ -31,25 +30,17 @@ gold_dbt_dag = DbtDag(
     ),
     profile_config=ProfileConfig(
         profile_name="data_platform",
-        target_name="prod",
-        profile_mapping=TrinoTokenProfileMapping(
-            conn_id="trino_default",
-            profile_args={
-                "database": "iceberg",
-                "schema": "silver",
-                "host": "trino.serving.svc.cluster.local",
-                "port": 8080,
-            },
-        ),
+        target_name="dev",
+        profiles_yml_filepath=DBT_PROFILES_PATH / "profiles.yml",
+    ),
+    execution_config=ExecutionConfig(
+        execution_mode=ExecutionMode.LOCAL,
+        dbt_executable_path="/home/airflow/.local/bin/dbt",
     ),
     render_config=RenderConfig(
         load_method=LoadMode.DBT_LS,
         select=["path:models/gold"],
     ),
-    operator_args={
-        "image": "ghcr.io/dbt-labs/dbt-trino:1.8.0",
-        "get_logs": True,
-    },
     schedule="@daily",
     start_date=datetime(2026, 1, 1),
     catchup=False,

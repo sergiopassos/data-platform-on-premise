@@ -25,4 +25,4 @@ deps:
   mysql:
     enabled: true
   elasticsearch:
-    enabled: true
+    enabled: false
