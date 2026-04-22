@@ -6,8 +6,13 @@ webhook:
 
 controller:
   workers: 10
-  namespaces:
+
+spark:
+  jobNamespaces:
     - processing
+  serviceAccount:
+    create: true
+    name: spark
 
 logLevel: 2
 
@@ -18,11 +23,6 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
-
-serviceAccounts:
-  spark:
-    create: true
-    name: spark
 
 rbac:
   create: true
