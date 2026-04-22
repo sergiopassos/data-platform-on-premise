@@ -29,3 +29,4 @@ kubeconfig
 .DS_Store
 temp.txt
 secret-backup.yaml
+docker/spark/jars/

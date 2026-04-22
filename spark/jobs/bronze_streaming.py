@@ -3,6 +3,8 @@
 Reads all cdc.public.* topics, validates against ODCS contracts,
 and routes to bronze.valid_{table} or bronze.invalid_{table} in Iceberg.
 """
+from __future__ import annotations
+
 import json
 import os
 import subprocess

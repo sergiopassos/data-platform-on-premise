@@ -7,7 +7,7 @@ spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: apache/spark:3.5.1-python3
+  image: data-platform/spark:3.5.1
   imagePullPolicy: IfNotPresent
   mainApplicationFile: s3a://warehouse/jars/bronze_streaming.py
   sparkVersion: "3.5.1"
@@ -29,11 +29,15 @@ spec:
     spark.hadoop.fs.s3a.secret.key: "minio123"
     spark.hadoop.fs.s3a.path.style.access: "true"
     spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
-    spark.jars.packages: >-
-      org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,
-      org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.80.0,
-      org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,
-      org.apache.hadoop:hadoop-aws:3.3.4
+    spark.jars: >-
+      local:///opt/spark/jars/iceberg-spark-runtime.jar,
+      local:///opt/spark/jars/nessie-spark-extensions.jar,
+      local:///opt/spark/jars/spark-sql-kafka.jar,
+      local:///opt/spark/jars/hadoop-aws.jar,
+      local:///opt/spark/jars/aws-java-sdk-bundle.jar,
+      local:///opt/spark/jars/spark-token-provider-kafka.jar,
+      local:///opt/spark/jars/kafka-clients.jar,
+      local:///opt/spark/jars/commons-pool2.jar
   driver:
     cores: 1
     coreLimit: "1200m"
