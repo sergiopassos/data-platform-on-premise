@@ -423,15 +423,24 @@ O Airflow executa o job Spark Batch a cada hora para processar Bronze → Silver
 
 **Acessar o Airflow em http://localhost:8081** (admin / admin):
 
-- DAG: `silver_processing_dag` → executar manualmente (botão ▶)
+- DAG: `silver_processing_manual` → executar manualmente (botão ▶)
+- OU DAGs automáticos: `silver_processing_customers` e `silver_processing_orders` (aparecem apenas quando os contratos ODCS estão em `warehouse/contracts/`)
 
-**Ou disparar via Airflow CLI:**
+> **Atenção:** Não use `kubectl exec -- airflow dags trigger`. O CLI dentro do pod usa SQLite em vez de PostgreSQL e falha com `sqlite3.OperationalError: no such table: dag`. Use sempre a REST API ou a UI.
+
+**Disparar via REST API:**
 ```bash
-# Acionar o DAG manualmente para hoje
-TODAY=$(date +%Y-%m-%d)
-kubectl exec -n orchestration deployment/airflow-webserver -- \
-  airflow dags trigger silver_processing_dag \
-  --conf "{\"date\": \"$TODAY\"}"
+# Trigger da tabela orders
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {"table_name": "orders"}}' | jq .
+
+# Trigger da tabela customers
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {"table_name": "customers"}}' | jq .
 ```
 
 **Acompanhar o job Spark Silver:**
@@ -479,10 +488,12 @@ O Airflow executa os modelos dbt diariamente usando Astronomer Cosmos.
 
 - DAG: `gold_dbt_dag` → executar manualmente (botão ▶)
 
-**Ou via CLI:**
+**Ou via REST API:**
 ```bash
-kubectl exec -n orchestration deployment/airflow-webserver -- \
-  airflow dags trigger gold_dbt_dag
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/gold_dbt_dag/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {}}' | jq .
 ```
 
 **Verificar modelos Gold via Trino:**
@@ -526,14 +537,21 @@ kubectl exec -n streaming $KAFKA_POD -- \
 # Via Trino:
 # SELECT * FROM iceberg.bronze.valid_customers WHERE email = 'teste@cdc.com';
 
-# 4. Disparar Silver processing
-kubectl exec -n orchestration deployment/airflow-webserver -- \
-  airflow dags trigger silver_processing_dag \
-  --conf "{\"date\": \"$(date +%Y-%m-%d)\"}"
+# 4. Disparar Silver processing (orders e customers)
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {"table_name": "orders"}}' | jq .status
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {"table_name": "customers"}}' | jq .status
 
 # 5. Disparar Gold dbt
-kubectl exec -n orchestration deployment/airflow-webserver -- \
-  airflow dags trigger gold_dbt_dag
+curl -s -u admin:admin -X POST \
+  http://localhost:8081/api/v1/dags/gold_dbt_dag/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {}}' | jq .status
 ```
 
 ### Monitorar latência end-to-end
@@ -668,6 +686,19 @@ kubectl exec -n streaming $KAFKA_POD -- \
   --topic cdc.public.customers
 ```
 
+### Airflow: `sqlite3.OperationalError: no such table: dag`
+
+O CLI do Airflow quando executado via `kubectl exec` usa SQLite em vez do PostgreSQL configurado. Nunca use `kubectl exec -- airflow dags trigger`.
+
+```bash
+# Verificar DAGs disponíveis via REST API
+curl -s -u admin:admin http://localhost:8081/api/v1/dags | jq '[.dags[].dag_id]'
+
+# Verificar status de um DAG run
+curl -s -u admin:admin \
+  "http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns?limit=5" | jq '.dag_runs[] | {dag_run_id, state}'
+```
+
 ### Trino: erro de conexão com Nessie
 
 ```bash
@@ -735,8 +766,8 @@ kubectl run mc --image=minio/mc --rm -it --restart=Never -- \
 |------|---------|
 | Ver mensagens Kafka | `kubectl exec -n streaming $KAFKA_POD -- bin/kafka-console-consumer.sh --bootstrap-server ... --topic cdc.public.customers --from-beginning` |
 | Status conectores | `curl -s http://localhost:8083/connectors \| jq .` |
-| Trigger Silver | `airflow dags trigger silver_processing_dag` |
-| Trigger Gold | `airflow dags trigger gold_dbt_dag` |
+| Trigger Silver | `curl -s -u admin:admin -X POST http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns -H "Content-Type: application/json" -d '{"conf":{"table_name":"orders"}}'` |
+| Trigger Gold | `curl -s -u admin:admin -X POST http://localhost:8081/api/v1/dags/gold_dbt_dag/dagRuns -H "Content-Type: application/json" -d '{}'` |
 | Query Bronze | `SELECT COUNT(*) FROM iceberg.bronze.customers_valid` |
 | Query Silver | `SELECT COUNT(*) FROM iceberg.silver.customers` |
 | Query Gold | `SELECT * FROM iceberg.gold.orders_summary` |
