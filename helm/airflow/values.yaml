@@ -109,6 +109,25 @@ podTemplate: |
     containers:
       - name: base
         image: apache/airflow:2.9.3-python3.11
+        env:
+          - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+            valueFrom:
+              secretKeyRef:
+                name: airflow-metadata
+                key: connection
+          - name: AIRFLOW__CORE__SQL_ALCHEMY_CONN
+            valueFrom:
+              secretKeyRef:
+                name: airflow-metadata
+                key: connection
+          - name: AIRFLOW__CORE__FERNET_KEY
+            value: "data-platform-local-fernet-key-replace-in-prod=="
+          - name: AIRFLOW__CORE__LOAD_EXAMPLES
+            value: "false"
+          - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+            value: "orchestration"
+          - name: AIRFLOW_CONN_TRINO_DEFAULT
+            value: "trino://trino.serving.svc.cluster.local:8080/iceberg"
         volumeMounts:
           - name: dbt-project
             mountPath: /opt/airflow/dbt
