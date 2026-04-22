@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: orders_summary
+    description: Daily order counts and revenue by status — Gold layer aggregation over Silver orders
+    columns:
+      - name: order_date
+        description: Day of the orders (truncated to day)
+        tests:
+          - not_null
+      - name: status
+        description: Order status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
+      - name: order_count
+        tests:
+          - not_null
+      - name: total_amount
+        tests:
+          - not_null
+
+  - name: customers_orders
+    description: Customer lifetime value and order history — Gold layer join over Silver customers and orders
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: email
+        tests:
+          - not_null
+      - name: total_orders
+        tests:
+          - not_null
+      - name: lifetime_value
+        tests:
+          - not_null

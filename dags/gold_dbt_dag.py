@@ -1,8 +1,8 @@
 """Airflow DAG: Silver → Gold via dbt + Cosmos (LOCAL execution mode).
 
-Uses astronomer-cosmos DbtDag to automatically discover and run
-all dbt models in the gold/ directory via the Trino adapter.
-dbt project is mounted at /opt/airflow/dbt via airflow-dbt-pvc.
+Cosmos DbtDag discovers and runs all dbt models under models/gold/ via the
+Trino adapter. The dbt project is git-cloned into /opt/airflow/dbt by an
+initContainer in each KubernetesExecutor worker pod.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ gold_dbt_dag = DbtDag(
     ),
     profile_config=ProfileConfig(
         profile_name="data_platform",
-        target_name="dev",
+        target_name="prod",
         profiles_yml_filepath=DBT_PROFILES_PATH / "profiles.yml",
     ),
     execution_config=ExecutionConfig(
