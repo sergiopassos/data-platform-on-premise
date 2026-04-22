@@ -15,9 +15,8 @@ spec:
       valueFiles: []
       values: |
         mode: standalone
-        auth:
-          rootUser: minio
-          rootPassword: minio123
+        rootUser: minio
+        rootPassword: minio123
         defaultBuckets: "warehouse"
         persistence:
           enabled: true
