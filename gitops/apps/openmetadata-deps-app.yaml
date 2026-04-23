@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openmetadata-deps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://helm.open-metadata.org
+      chart: openmetadata-dependencies
+      targetRevision: "1.4.7"
+      helm:
+        valueFiles:
+          - $values/helm/openmetadata-deps/values.yaml
+    - repoURL: git@github.com:sergiopassos/data-platform-on-premise.git
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: governance
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
