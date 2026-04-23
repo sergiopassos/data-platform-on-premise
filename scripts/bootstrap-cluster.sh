@@ -128,10 +128,14 @@ kubectl create secret generic airflow-secrets \
   --from-literal=openmetadata-airflow-password="${OPENMETADATA_AIRFLOW_PASSWORD:-admin}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# ── 9. Chainlit portal image ───────────────────────────────────────────────────
-log "Step 9: Building and loading Chainlit portal image..."
+# ── 9. Images: Chainlit portal + MySQL ────────────────────────────────────────
+log "Step 9: Building and loading images into KIND..."
 docker build -t data-platform/chainlit-portal:latest portal/
 kind load docker-image data-platform/chainlit-portal:latest --name "$CLUSTER_NAME"
+
+# MySQL official image for OpenMetadata (Bitnami tags removed from Docker Hub)
+docker pull mysql:8.0
+kind load docker-image mysql:8.0 --name "$CLUSTER_NAME"
 
 # ── 10. Root App of Apps ──────────────────────────────────────────────────────
 log "Step 10: Applying root App of Apps..."
