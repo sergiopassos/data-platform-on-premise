@@ -1,14 +1,5 @@
 replicaCount: 1
 
-openmetadata:
-  config:
-    authorizer:
-      enabled: false
-    authentication:
-      enabled: false
-    airflow:
-      enabled: false
-
 resources:
   requests:
     memory: 1.5Gi

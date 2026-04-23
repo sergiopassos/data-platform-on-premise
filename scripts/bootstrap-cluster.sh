@@ -127,10 +127,23 @@ kind load docker-image data-platform/chainlit-portal:latest --name "$CLUSTER_NAM
 log "Step 10: Applying root App of Apps..."
 kubectl apply -f gitops/bootstrap/root-app.yaml
 
-# ── 11. Airflow DB migration ──────────────────────────────────────────────────
+# ── 11. MinIO buckets ─────────────────────────────────────────────────────────
+# Nessie health-checks the S3 buckets at startup; create them before Nessie
+# probes run or it will fail ReadinessProbe and never become Ready.
+log "Step 11: Waiting for MinIO to be ready and creating buckets..."
+kubectl wait pod -l "app=minio" -n infra --for=condition=Ready --timeout=180s
+MINIO_POD=$(kubectl get pod -n infra -l "app=minio" -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n infra "$MINIO_POD" -- sh -c "
+  mc alias set local http://localhost:9000 minio minio123 --insecure 2>/dev/null
+  mc mb --ignore-existing local/warehouse
+  mc mb --ignore-existing local/bronze
+"
+log "  Buckets warehouse and bronze created."
+
+# ── 12. Airflow DB migration ──────────────────────────────────────────────────
 # ArgoCD does not execute Helm pre-install hook Jobs, so we run it manually.
 # First wait for ArgoCD to deploy the Airflow release (PostgreSQL pod appears).
-log "Step 11: Waiting for Airflow PostgreSQL pod to appear (ArgoCD sync)..."
+log "Step 12: Waiting for Airflow PostgreSQL pod to appear (ArgoCD sync)..."
 until kubectl get pod -l "app.kubernetes.io/name=postgresql,app.kubernetes.io/instance=airflow" \
     -n orchestration --no-headers 2>/dev/null | grep -q .; do
   sleep 5
@@ -171,9 +184,9 @@ kubectl rollout status deployment/airflow-scheduler deployment/airflow-webserver
 kubectl wait pod -l "component=triggerer,release=airflow" \
   -n orchestration --for=condition=Ready --timeout=300s
 
-# ── 12. Airflow admin user ────────────────────────────────────────────────────
+# ── 13. Airflow admin user ────────────────────────────────────────────────────
 # ArgoCD skips the create-user Helm hook job, so create the user manually.
-log "Step 12: Creating Airflow admin user..."
+log "Step 13: Creating Airflow admin user..."
 WEBSERVER_POD=$(kubectl get pod -l "component=webserver,release=airflow" \
   -n orchestration -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
