@@ -1,6 +1,8 @@
 mysql:
   enabled: true
   fullnameOverride: "mysql"
+  image:
+    tag: "latest"
   auth:
     rootPassword: "password"
     username: "openmetadata_user"
