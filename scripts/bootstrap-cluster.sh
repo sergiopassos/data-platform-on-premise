@@ -118,6 +118,16 @@ kubectl create secret generic airflow-fernet-key \
   --from-literal=fernet-key="${AIRFLOW_FERNET_KEY:-data-platform-local-fernet-key-replace-in-prod==}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+kubectl create secret generic mysql-secrets \
+  -n governance \
+  --from-literal=openmetadata-mysql-password="${OPENMETADATA_MYSQL_PASSWORD:-openmetadata_password}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl create secret generic airflow-secrets \
+  -n governance \
+  --from-literal=openmetadata-airflow-password="${OPENMETADATA_AIRFLOW_PASSWORD:-admin}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 # ── 9. Chainlit portal image ───────────────────────────────────────────────────
 log "Step 9: Building and loading Chainlit portal image..."
 docker build -t data-platform/chainlit-portal:latest portal/
