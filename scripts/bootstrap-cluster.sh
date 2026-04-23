@@ -152,7 +152,13 @@ kubectl run airflow-db-migrate \
   -n orchestration \
   -- airflow db migrate
 kubectl wait pod/airflow-db-migrate -n orchestration \
-  --for=condition=Ready=false --timeout=120s
+  --for=jsonpath='{.status.phase}'=Succeeded --timeout=300s
+MIGRATE_PHASE=$(kubectl get pod airflow-db-migrate -n orchestration -o jsonpath='{.status.phase}')
+if [ "$MIGRATE_PHASE" != "Succeeded" ]; then
+  log "ERROR: airflow db migrate failed (phase=$MIGRATE_PHASE). Logs:"
+  kubectl logs airflow-db-migrate -n orchestration
+  exit 1
+fi
 kubectl delete pod airflow-db-migrate -n orchestration
 
 # Restart Airflow pods so they pick up the migrated DB immediately
@@ -161,15 +167,14 @@ log "  Restarting Airflow components to pick up migrated DB..."
 kubectl rollout restart deployment/airflow-scheduler deployment/airflow-webserver -n orchestration
 kubectl rollout restart statefulset/airflow-triggerer -n orchestration
 kubectl rollout status deployment/airflow-scheduler deployment/airflow-webserver \
-  -n orchestration --timeout=180s
-# Triggerer StatefulSet may be in backoff; delete pod to force clean restart
-kubectl delete pod airflow-triggerer-0 -n orchestration 2>/dev/null || true
+  -n orchestration --timeout=600s
+kubectl wait pod -l "component=triggerer,release=airflow" \
+  -n orchestration --for=condition=Ready --timeout=300s
 
 # ── 12. Airflow admin user ────────────────────────────────────────────────────
 # ArgoCD skips the create-user Helm hook job, so create the user manually.
 log "Step 12: Creating Airflow admin user..."
-kubectl rollout status deployment/airflow-webserver -n orchestration --timeout=180s
-WEBSERVER_POD=$(kubectl get pod -l "app.kubernetes.io/name=webserver,app.kubernetes.io/instance=airflow" \
+WEBSERVER_POD=$(kubectl get pod -l "component=webserver,release=airflow" \
   -n orchestration -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
   --username admin \
