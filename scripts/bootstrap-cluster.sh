@@ -131,6 +131,9 @@ kubectl apply -f gitops/bootstrap/root-app.yaml
 # Nessie health-checks the S3 buckets at startup; create them before Nessie
 # probes run or it will fail ReadinessProbe and never become Ready.
 log "Step 11: Waiting for MinIO to be ready and creating buckets..."
+until kubectl get pod -l "app=minio" -n infra --no-headers 2>/dev/null | grep -q .; do
+  sleep 5
+done
 kubectl wait pod -l "app=minio" -n infra --for=condition=Ready --timeout=180s
 MINIO_POD=$(kubectl get pod -n infra -l "app=minio" -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n infra "$MINIO_POD" -- sh -c "
