@@ -7,6 +7,7 @@ Flow:
   4. Contract is saved to /contracts/{table}.yaml
   5. Debezium connector is activated via KafkaConnect REST API
 """
+import asyncio
 import os
 from pathlib import Path
 
@@ -91,8 +92,11 @@ async def handle_message(message: cl.Message) -> None:
     )
     await cl.Message(content=f"Schema encontrado ({len(columns)} colunas):\n{col_summary}").send()
 
-    await cl.Message(content="Gerando contrato ODCS v3.1 via Ollama...").send()
-    contract = _generator.generate(table_name, columns)
+    await cl.Message(
+        content="Gerando contrato ODCS v3.1 via Ollama... (pode levar alguns minutos no CPU)"
+    ).send()
+    # Run blocking Ollama HTTP call in a thread to avoid blocking the async event loop
+    contract = await asyncio.to_thread(_generator.generate, table_name, columns)
 
     contract_path = _CONTRACTS_DIR / f"{table_name}.yaml"
     contract_yaml = yaml.dump(contract, default_flow_style=False, allow_unicode=True)
@@ -106,7 +110,7 @@ async def handle_message(message: cl.Message) -> None:
     ).send()
 
     await cl.Message(content="Ativando connector Debezium via KafkaConnect...").send()
-    result = _activator.activate(table_name)
+    result = await asyncio.to_thread(_activator.activate, table_name)
 
     status = result.get("status", "created")
     connector_name = result.get("name", f"debezium-public-{table_name}")

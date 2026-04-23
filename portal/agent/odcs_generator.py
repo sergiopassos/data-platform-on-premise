@@ -70,7 +70,8 @@ class ODCSGenerator:
         return contract
 
     def _call_ollama(self, prompt: str) -> str:
-        with httpx.Client(timeout=120) as client:
+        # CPU inference for llama3.2:3b takes 3-8 min on KIND — use generous timeout
+        with httpx.Client(timeout=600) as client:
             resp = client.post(
                 f"{self.ollama_url}/api/generate",
                 json={"model": self.model, "prompt": prompt, "stream": False},
