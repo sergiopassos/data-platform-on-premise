@@ -185,17 +185,35 @@ kubectl wait pod -l "component=triggerer,release=airflow" \
   -n orchestration --for=condition=Ready --timeout=300s
 
 # ── 13. Airflow admin user ────────────────────────────────────────────────────
-# ArgoCD skips the create-user Helm hook job, so create the user manually.
+# ArgoCD may also run the create-user hook Job. We create the user here as a
+# fallback with retry, since the webserver can be briefly killed under memory
+# pressure right after rollout completes (exit 137 = SIGKILL).
 log "Step 13: Creating Airflow admin user..."
-WEBSERVER_POD=$(kubectl get pod -l "component=webserver,release=airflow" \
-  -n orchestration -o jsonpath='{.items[0].metadata.name}')
-kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
-  --username admin \
-  --firstname Admin \
-  --lastname User \
-  --role Admin \
-  --email admin@example.com \
-  --password admin
+USER_CREATED=false
+for attempt in 1 2 3 4 5; do
+  WEBSERVER_POD=$(kubectl get pod -l "component=webserver,release=airflow" \
+    -n orchestration -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [ -z "$WEBSERVER_POD" ]; then
+    log "  Webserver pod not found, retrying ($attempt/5)..."; sleep 10; continue
+  fi
+  # Check if user already created (e.g. by ArgoCD hook)
+  EXISTING=$(kubectl exec -n orchestration "$WEBSERVER_POD" -- \
+    airflow users list 2>/dev/null | grep "^1 " || true)
+  if [ -n "$EXISTING" ]; then
+    log "  Admin user already exists (created by ArgoCD hook)."; USER_CREATED=true; break
+  fi
+  if kubectl exec -n orchestration "$WEBSERVER_POD" -- airflow users create \
+      --username admin --firstname Admin --lastname User \
+      --role Admin --email admin@example.com --password admin 2>&1 | \
+      grep -qE "created|already exist"; then
+    log "  Admin user created."; USER_CREATED=true; break
+  fi
+  log "  Attempt $attempt/5 failed, retrying in 15s..."; sleep 15
+done
+if [ "$USER_CREATED" != "true" ]; then
+  log "WARNING: Could not create admin user after 5 attempts."
+  log "  Run manually: kubectl exec -n orchestration deploy/airflow-webserver -- airflow users create --username admin --password admin --role Admin --firstname Admin --lastname User --email admin@example.com"
+fi
 
 log ""
 log "=== Bootstrap Complete ==="
