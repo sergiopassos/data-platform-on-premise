@@ -2,6 +2,8 @@ FROM apache/spark:3.5.1-python3
 
 USER root
 
+RUN pip install --no-cache-dir "datacontract-cli==0.10.8"
+
 RUN BASE="https://repo1.maven.org/maven2" && \
     cd /opt/spark/jars && \
     curl -fsSL "$BASE/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.5.2/iceberg-spark-runtime-3.5_2.12-1.5.2.jar" -o iceberg-spark-runtime.jar && \

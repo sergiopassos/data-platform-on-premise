@@ -8,8 +8,8 @@ spec:
   pythonVersion: "3"
   mode: cluster
   image: data-platform/spark:3.5.1
-  imagePullPolicy: IfNotPresent
-  mainApplicationFile: s3a://warehouse/jars/bronze_streaming.py
+  imagePullPolicy: Never
+  mainApplicationFile: local:///opt/spark/scripts/bronze_streaming.py
   sparkVersion: "3.5.1"
   restartPolicy:
     type: OnFailure
@@ -44,14 +44,13 @@ spec:
     memory: "1g"
     serviceAccount: spark
     initContainers:
-      - name: setup-buckets-and-contracts
+      - name: fetch-contracts
         image: minio/mc:RELEASE.2024-01-13T08-44-48Z
         command: ["/bin/sh", "-c"]
         args:
           - |
             mc alias set minio http://minio.infra.svc.cluster.local:9000 minio minio123 --insecure &&
-            mc mb --ignore-existing minio/bronze &&
-            mc cp --recursive minio/warehouse/contracts/ /contracts/ || true
+            mc cp --recursive minio/contracts/ /contracts/ || true
         volumeMounts:
           - name: contracts
             mountPath: /contracts
@@ -65,6 +64,8 @@ spec:
     volumeMounts:
       - name: contracts
         mountPath: /contracts
+      - name: script
+        mountPath: /opt/spark/scripts
   executor:
     cores: 2
     instances: 1
@@ -79,6 +80,11 @@ spec:
     volumeMounts:
       - name: contracts
         mountPath: /contracts
+      - name: script
+        mountPath: /opt/spark/scripts
   volumes:
     - name: contracts
       emptyDir: {}
+    - name: script
+      configMap:
+        name: bronze-streaming-script

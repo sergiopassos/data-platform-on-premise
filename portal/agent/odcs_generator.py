@@ -1,10 +1,21 @@
-"""Ollama-powered ODCS v3.1 contract generator."""
+"""Provider-agnostic ODCS v3.1 contract generator.
+
+The generator is stateless and takes the active ``LLMProvider`` at
+``generate()`` call time, not at construction. This allows a single
+module-level generator instance to be reused across all Chainlit
+sessions, while each session picks its own provider.
+
+The ``_parse_and_validate`` and ``_build_fallback_contract`` methods
+are preserved verbatim from the pre-refactor version (SC-4 from DEFINE).
+"""
+from __future__ import annotations
+
 import json
 from typing import Any
 
-import httpx
 import yaml
 
+from .providers import LLMProvider
 from .schema_inspector import ColumnInfo
 
 _PG_TO_ODCS_TYPE = {
@@ -47,11 +58,20 @@ YAML:"""
 
 
 class ODCSGenerator:
-    def __init__(self, ollama_url: str, model: str = "llama3.2:3b") -> None:
-        self.ollama_url = ollama_url.rstrip("/")
-        self.model = model
+    """Stateless ODCS v3.1 generator. Provider is injected per ``generate()`` call."""
 
-    def generate(self, table_name: str, columns: list[ColumnInfo]) -> dict[str, Any]:
+    async def generate(
+        self,
+        table_name: str,
+        columns: list[ColumnInfo],
+        *,
+        provider: LLMProvider,
+    ) -> dict[str, Any]:
+        prompt = self._build_prompt(table_name, columns)
+        raw_yaml = await provider.generate_yaml(prompt)
+        return self._parse_and_validate(raw_yaml, table_name, columns)
+
+    def _build_prompt(self, table_name: str, columns: list[ColumnInfo]) -> str:
         columns_json = json.dumps(
             [
                 {
@@ -64,20 +84,9 @@ class ODCSGenerator:
             ],
             indent=2,
         )
-        prompt = _PROMPT_TEMPLATE.format(table_name=table_name, columns_json=columns_json)
-        raw_yaml = self._call_ollama(prompt)
-        contract = self._parse_and_validate(raw_yaml, table_name, columns)
-        return contract
-
-    def _call_ollama(self, prompt: str) -> str:
-        # CPU inference for llama3.2:3b takes 3-8 min on KIND — use generous timeout
-        with httpx.Client(timeout=600) as client:
-            resp = client.post(
-                f"{self.ollama_url}/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
-            )
-            resp.raise_for_status()
-            return resp.json()["response"]
+        return _PROMPT_TEMPLATE.format(
+            table_name=table_name, columns_json=columns_json
+        )
 
     def _parse_and_validate(
         self, raw_yaml: str, table_name: str, columns: list[ColumnInfo]
@@ -85,7 +94,9 @@ class ODCSGenerator:
         raw_yaml = raw_yaml.strip()
         if raw_yaml.startswith("```"):
             lines = raw_yaml.split("\n")
-            raw_yaml = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+            raw_yaml = "\n".join(
+                lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+            )
 
         try:
             contract = yaml.safe_load(raw_yaml)
@@ -97,7 +108,9 @@ class ODCSGenerator:
 
         return contract
 
-    def _build_fallback_contract(self, table_name: str, columns: list[ColumnInfo]) -> dict[str, Any]:
+    def _build_fallback_contract(
+        self, table_name: str, columns: list[ColumnInfo]
+    ) -> dict[str, Any]:
         fields = [
             {
                 "name": c.name,
@@ -108,7 +121,11 @@ class ODCSGenerator:
             for c in columns
         ]
         pk_names = [c.name for c in columns if c.is_primary_key]
-        quality = [{"type": "notNull", "column": c.name} for c in columns if not c.is_nullable]
+        quality = [
+            {"type": "notNull", "column": c.name}
+            for c in columns
+            if not c.is_nullable
+        ]
         if pk_names:
             quality.append({"type": "unique", "column": pk_names[0]})
 

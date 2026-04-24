@@ -108,6 +108,16 @@ kubectl create secret generic postgres-source-secret \
   --from-literal=password="${POSTGRES_PASSWORD:-postgres}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+# gemini-api-secret for Chainlit portal (Gemini LLM provider)
+if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+  log "WARNING: GEMINI_API_KEY env var is empty — creating placeholder secret."
+  log "         Gemini provider will fail until the secret is updated."
+fi
+kubectl create secret generic gemini-api-secret \
+  -n portal \
+  --from-literal=api-key="${GEMINI_API_KEY:-placeholder-replace-me}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl create secret generic airflow-git-ssh \
   -n orchestration \
   --from-file=gitSshKey="$SSH_KEY" \
@@ -154,6 +164,7 @@ kubectl exec -n infra "$MINIO_POD" -- sh -c "
   mc alias set local http://localhost:9000 minio minio123 --insecure 2>/dev/null
   mc mb --ignore-existing local/warehouse
   mc mb --ignore-existing local/bronze
+  mc mb --ignore-existing local/contracts
 "
 log "  Buckets warehouse and bronze created."
 
@@ -244,7 +255,7 @@ log "                http://localhost:8090  (admin / see password below)"
 log "  Airflow:      kubectl port-forward svc/airflow-webserver -n orchestration 8081:8080"
 log "                http://localhost:8081  (admin / admin)"
 log "  Trino:        kubectl port-forward svc/trino -n serving 8082:8080"
-log "  MinIO:        kubectl port-forward svc/minio -n infra 9001:9001"
+log "  MinIO:        kubectl port-forward svc/minio-console -n infra 9001:9001"
 log "  Chainlit:     kubectl port-forward svc/chainlit -n portal 8000:8000"
 log "  OpenMetadata: kubectl port-forward svc/openmetadata -n governance 8585:8585"
 log ""

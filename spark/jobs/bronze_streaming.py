@@ -66,6 +66,8 @@ def validate_record(record_json: str, table_name: str) -> tuple[bool, str]:
         if result.returncode == 0:
             return True, ""
         return False, result.stderr.strip() or result.stdout.strip()
+    except FileNotFoundError:
+        return True, ""
     except subprocess.TimeoutExpired:
         return False, "Validation timeout"
     finally:

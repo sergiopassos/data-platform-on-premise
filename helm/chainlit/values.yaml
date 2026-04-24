@@ -24,6 +24,15 @@ env:
     value: "http://kafka-connect.streaming.svc.cluster.local:8083"
   - name: CONTRACTS_DIR
     value: "/contracts"
+  - name: DEFAULT_LLM_PROVIDER
+    value: "gemini"
+  - name: GEMINI_MODEL
+    value: "gemini-2.0-flash"
+  - name: GEMINI_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: gemini-api-secret
+        key: api-key
   - name: POSTGRES_HOST
     valueFrom:
       secretKeyRef:

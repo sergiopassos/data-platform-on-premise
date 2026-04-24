@@ -85,6 +85,28 @@ podTemplate: |
   spec:
     serviceAccountName: airflow-worker
     initContainers:
+      - name: git-clone-dags
+        image: alpine/git:2.43.0
+        command: [sh, -c]
+        args:
+          - |
+            mkdir -p /root/.ssh
+            cp /etc/git-secret/gitSshKey /root/.ssh/id_ed25519
+            chmod 600 /root/.ssh/id_ed25519
+            echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > /root/.ssh/known_hosts
+            git clone --depth=1 --filter=blob:none --no-checkout \
+              git@github.com:sergiopassos/data-platform-on-premise.git /tmp/repo
+            cd /tmp/repo && git sparse-checkout init --cone
+            git sparse-checkout set dags && git checkout
+            mkdir -p /opt/airflow/dags/repo
+            cp -rT /tmp/repo/dags /opt/airflow/dags/repo/dags
+            echo "dags synced to /opt/airflow/dags/repo/dags"
+        volumeMounts:
+          - name: dags
+            mountPath: /opt/airflow/dags
+          - name: git-ssh
+            mountPath: /etc/git-secret
+            readOnly: true
       - name: git-clone-dbt
         image: alpine/git:2.43.0
         command: [sh, -c]
@@ -129,9 +151,13 @@ podTemplate: |
           - name: AIRFLOW_CONN_TRINO_DEFAULT
             value: "trino://trino.serving.svc.cluster.local:8080/iceberg"
         volumeMounts:
+          - name: dags
+            mountPath: /opt/airflow/dags
           - name: dbt-project
             mountPath: /opt/airflow/dbt
     volumes:
+      - name: dags
+        emptyDir: {}
       - name: dbt-project
         emptyDir: {}
       - name: git-ssh

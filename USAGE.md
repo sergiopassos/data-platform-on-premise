@@ -135,9 +135,64 @@ SHOW wal_level;
 
 ---
 
-## Passo 2 — Ativar CDC (via curl)
+## Passo 2 — Ativar CDC
 
-> O portal Chainlit pode ser usado para gerar contratos ODCS via Ollama, mas a ativação do CDC pode ser feita diretamente via curl.
+O portal Chainlit (`http://localhost:8000`) automatiza o fluxo completo: inspeciona o schema, gera o contrato ODCS e ativa o conector Debezium em uma única interação.
+
+### Opção A — Portal Chainlit (recomendado)
+
+O portal suporta múltiplos provedores LLM para geração dos contratos ODCS.
+
+**Configurar o provider LLM:**
+
+| Provider | Requisito | Velocidade |
+|----------|-----------|------------|
+| `gemini` | `GEMINI_API_KEY` no Secret K8s | ~5s |
+| `fallback` | Nenhum | Instantâneo (regra determinística) |
+| `ollama` | Pod Ollama rodando no cluster | ~3-8 min (CPU) |
+
+**Usar o portal:**
+
+1. Abra `http://localhost:8000`
+2. Selecione o provider no ícone de engrenagem ⚙ (canto superior direito) **ou** use o comando `/llm <nome>` no chat
+3. Digite o nome da tabela (ex: `orders`)
+4. O portal irá: inspecionar o schema → gerar contrato ODCS → salvar em MinIO → ativar o conector Debezium
+
+```
+# Exemplos de comandos no chat:
+/llm gemini      → usa Google Gemini (requer GEMINI_API_KEY)
+/llm fallback    → gera contrato determinístico sem LLM
+/llm ollama      → usa Ollama local (lento no CPU, timeout 30s)
+```
+
+**Configurar a GEMINI_API_KEY (uma vez por cluster):**
+
+```bash
+kubectl create secret generic gemini-api-secret \
+  -n portal \
+  --from-literal=api-key="<sua-chave>" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/chainlit -n portal
+```
+
+---
+
+### Opção B — Ativar CDC via curl (sem portal)
+
+> Use este método para ativar conectores sem precisar do portal ou quando quiser criar o contrato manualmente.
+
+**Criar o contrato ODCS manualmente e fazer upload para MinIO:**
+
+```bash
+# Copiar o contrato para o MinIO (requerido para o job Silver)
+MINIO_POD=$(kubectl get pod -n infra -l app=minio -o jsonpath='{.items[0].metadata.name}')
+kubectl cp contracts/orders.yaml infra/$MINIO_POD:/tmp/orders.yaml
+kubectl exec -n infra $MINIO_POD -- mc alias set local http://localhost:9000 minio minio123 --insecure
+kubectl exec -n infra $MINIO_POD -- mc cp /tmp/orders.yaml local/contracts/orders.yaml
+```
+
+**Criar os conectores Debezium:**
 
 **Criar os conectores Debezium:**
 
@@ -332,25 +387,21 @@ Cada operação gera imediatamente uma mensagem no Kafka.
 
 O job Spark Streaming consome os tópicos `cdc.public.*` e escreve no Iceberg (MinIO).
 
-**Pré-requisitos — bucket e script devem existir no MinIO:**
+**Pré-requisitos — executar uma vez antes de iniciar os jobs Spark:**
 
 ```bash
-# 1. Criar o bucket warehouse (se não existir)
-kubectl exec -n infra deployment/minio -- mc alias set local http://localhost:9000 minio minio123
-kubectl exec -n infra deployment/minio -- mc mb local/warehouse 2>/dev/null || echo "bucket já existe"
+# 1. Construir a imagem Spark customizada (JARs pré-instalados)
+docker build -t data-platform/spark:3.5.1 docker/spark/
 
-# 2. Verificar se o script está no bucket
-kubectl exec -n infra deployment/minio -- mc ls local/warehouse/jars/
+# 2. Carregar a imagem nos nós do KIND (obrigatório — imagePullPolicy: Never)
+kind load docker-image data-platform/spark:3.5.1 --name data-platform
 
-# Se não estiver, fazer upload:
-CONTENT=$(base64 -w0 spark/jobs/bronze_streaming.py)
-kubectl exec -n infra deployment/minio -- sh -c "
-  echo '$CONTENT' | base64 -d > /tmp/bronze_streaming.py &&
-  mc cp /tmp/bronze_streaming.py local/warehouse/jars/bronze_streaming.py
-"
+# 3. Aplicar os ConfigMaps com os scripts PySpark
+kubectl apply -f spark/scripts/bronze-streaming-configmap.yaml
+kubectl apply -f spark/scripts/silver-batch-configmap.yaml
 ```
 
-> O job baixa os JARs (Iceberg, Nessie, Kafka, Hadoop-AWS) do Maven na primeira execução — pode levar alguns minutos.
+> O build baixa os JARs (Iceberg, Nessie, Kafka, Hadoop-AWS) do Maven — pode levar alguns minutos na primeira vez. O `kind load` copia a imagem para os 3 nós do cluster.
 
 **Verificar se o job está rodando:**
 ```bash
@@ -424,7 +475,7 @@ O Airflow executa o job Spark Batch a cada hora para processar Bronze → Silver
 **Acessar o Airflow em http://localhost:8081** (admin / admin):
 
 - DAG: `silver_processing_manual` → executar manualmente (botão ▶)
-- OU DAGs automáticos: `silver_processing_customers` e `silver_processing_orders` (aparecem apenas quando os contratos ODCS estão em `warehouse/contracts/`)
+- OU DAGs automáticos: `silver_processing_customers` e `silver_processing_orders` (aparecem apenas quando os contratos ODCS estão em `s3://contracts/`)
 
 > **Atenção:** Não use `kubectl exec -- airflow dags trigger`. O CLI dentro do pod usa SQLite em vez de PostgreSQL e falha com `sqlite3.OperationalError: no such table: dag`. Use sempre a REST API ou a UI.
 
@@ -664,6 +715,15 @@ kubectl exec -n infra $POSTGRES_POD -- psql -U postgres -d sourcedb \
   -c "SELECT pg_drop_replication_slot('debezium_customers');"
 ```
 
+### Spark: `ErrImageNeverPull` — imagem não encontrada no nó
+
+A imagem `data-platform/spark:3.5.1` precisa ser carregada no KIND antes de usar. `imagePullPolicy: Never` impede o download automático.
+
+```bash
+docker build -t data-platform/spark:3.5.1 docker/spark/
+kind load docker-image data-platform/spark:3.5.1 --name data-platform
+```
+
 ### Spark: job travado ou com erro
 
 ```bash
@@ -719,43 +779,91 @@ kubectl get pod -n infra -l app=minio
 kubectl logs -n infra deployment/minio --tail=50
 ```
 
+### Portal Chainlit: provider Gemini falha com "GEMINI_API_KEY is not set"
+
+```bash
+# Verificar se o secret existe
+kubectl get secret gemini-api-secret -n portal
+
+# Recriar com a chave correta
+kubectl create secret generic gemini-api-secret \
+  -n portal \
+  --from-literal=api-key="<sua-chave>" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/chainlit -n portal
+```
+
+### Portal Chainlit: geração trava sem mensagem de erro (Ollama)
+
+O provider `ollama` tem timeout de 30 segundos no CPU. Se travar, aparecerá uma mensagem de erro e o provider será limpo. Selecione `fallback` ou `gemini`:
+
+```
+# No chat do portal:
+/llm fallback
+```
+
+### Portal Chainlit: logs de erro
+
+```bash
+kubectl logs -n portal deployment/chainlit --tail=50
+```
+
 ---
 
 ## Contratos de Dados (ODCS)
 
-Os contratos vivem em `contracts/` e são montados nos pods Spark via MinIO.
+Os contratos vivem em `contracts/` (repositório) e são lidos pelos jobs Spark a partir de `s3://contracts/` (bucket dedicado no MinIO).
 
-**Estrutura de um contrato:**
+O portal Chainlit (`http://localhost:8000`) é o caminho principal: gera o contrato via LLM e faz o upload para MinIO automaticamente.
+
+**Estrutura de um contrato ODCS v3.1:**
 ```yaml
 # contracts/customers.yaml
-apiVersion: v3.1
-kind: DataContract
-info:
-  title: customers
-  version: 1.0.0
+dataContractSpecification: "0.9.3"
+id: urn:datacontract:customers
+name: customers
+version: 1.0.0
+description: Auto-generated contract for table customers
+owner: data-platform
+domain: source
 schema:
-  - name: customers
-    fields:
-      - name: customer_id
-        type: integer
-        primaryKey: true
-        required: true
-      - name: email
-        type: string
-        required: true
-        unique: true
-      - name: name
-        type: string
-        required: true
-      - name: created_at
-        type: timestamp
+  type: table
+  fields:
+    - name: customer_id
+      type: integer
+      required: true
+      primaryKey: true
+    - name: email
+      type: string
+      required: true
+    - name: name
+      type: string
+      required: true
+    - name: created_at
+      type: timestamp
+quality:
+  - type: notNull
+    column: customer_id
+  - type: notNull
+    column: email
+  - type: notNull
+    column: name
+  - type: unique
+    column: customer_id
 ```
 
-**Upload manual de contrato:**
+**Upload manual de contrato (alternativa ao portal):**
 ```bash
-# Via mc (MinIO client)
-kubectl run mc --image=minio/mc --rm -it --restart=Never -- \
-  mc cp /contracts/customers.yaml minio/warehouse/contracts/customers.yaml
+MINIO_POD=$(kubectl get pod -n infra -l app=minio -o jsonpath='{.items[0].metadata.name}')
+kubectl cp contracts/customers.yaml infra/$MINIO_POD:/tmp/customers.yaml
+kubectl exec -n infra $MINIO_POD -- mc alias set local http://localhost:9000 minio minio123 --insecure
+kubectl exec -n infra $MINIO_POD -- mc cp /tmp/customers.yaml local/contracts/customers.yaml
+```
+
+**Verificar contratos no MinIO:**
+```bash
+kubectl exec -n infra $MINIO_POD -- mc ls local/contracts/
 ```
 
 ---
@@ -764,6 +872,10 @@ kubectl run mc --image=minio/mc --rm -it --restart=Never -- \
 
 | Ação | Comando |
 |------|---------|
+| Abrir portal | `kubectl port-forward svc/chainlit -n portal 8000:8000` → `http://localhost:8000` |
+| Trocar provider no portal | `/llm gemini` ou `/llm fallback` ou `/llm ollama` (no chat) |
+| Configurar GEMINI_API_KEY | `kubectl create secret generic gemini-api-secret -n portal --from-literal=api-key="..." --dry-run=client -o yaml \| kubectl apply -f -` |
+| Logs do portal | `kubectl logs -n portal deployment/chainlit --tail=50` |
 | Ver mensagens Kafka | `kubectl exec -n streaming $KAFKA_POD -- bin/kafka-console-consumer.sh --bootstrap-server ... --topic cdc.public.customers --from-beginning` |
 | Status conectores | `curl -s http://localhost:8083/connectors \| jq .` |
 | Trigger Silver | `curl -s -u admin:admin -X POST http://localhost:8081/api/v1/dags/silver_processing_manual/dagRuns -H "Content-Type: application/json" -d '{"conf":{"table_name":"orders"}}'` |
