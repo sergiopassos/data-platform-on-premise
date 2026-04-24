@@ -9,13 +9,14 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+_TEMPLATES_DIR = str(Path(__file__).parent / "templates")
+
 import yaml
 from airflow import DAG
 from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import SparkKubernetesOperator
 from airflow.providers.cncf.kubernetes.sensors.spark_kubernetes import SparkKubernetesSensor
 
 CONTRACTS_DIR = Path(os.getenv("CONTRACTS_DIR", "/contracts"))
-SPARK_APP_TEMPLATE = Path("/opt/airflow/dags/templates/silver-batch-app.yaml")
 
 default_args = {
     "owner": "data-platform",
@@ -43,18 +44,17 @@ def create_silver_dag(table_name: str) -> DAG:
         catchup=False,
         tags=["silver", "spark", table_name],
         max_active_runs=1,
+        template_searchpath=[_TEMPLATES_DIR],
     ) as dag:
-        processing_date = "{{ ds }}"
-
         submit = SparkKubernetesOperator(
             task_id=f"submit_silver_{table_name}",
             namespace="processing",
-            application_file="spark/applications/silver-batch-app.yaml",
+            application_file="silver-batch-app.yaml",
             kubernetes_conn_id="kubernetes_default",
             do_xcom_push=True,
             params={
                 "table_name": table_name,
-                "date": processing_date,
+                "date": "{{ ds }}",
             },
         )
 
@@ -84,11 +84,12 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "spark", "manual"],
+    template_searchpath=[_TEMPLATES_DIR],
     params={"table_name": "orders", "date": "{{ ds }}"},
 ) as manual_dag:
     SparkKubernetesOperator(
         task_id="submit_silver_manual",
         namespace="processing",
-        application_file="spark/applications/silver-batch-app.yaml",
+        application_file="silver-batch-app.yaml",
         kubernetes_conn_id="kubernetes_default",
     )

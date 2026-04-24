@@ -1,0 +1,75 @@
+# Template SparkApplication for Bronze → Silver batch.
+# Rendered by SparkKubernetesOperator with params.table_name and params.date.
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: silver-batch-{{ params.table_name }}-{{ params.date }}
+  namespace: processing
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: data-platform/spark:3.5.1
+  imagePullPolicy: Never
+  mainApplicationFile: local:///opt/spark/scripts/bronze_to_silver.py
+  arguments:
+    - "--table"
+    - "{{ params.table_name }}"
+    - "--date"
+    - "{{ params.date }}"
+  sparkVersion: "3.5.1"
+  restartPolicy:
+    type: Never
+  sparkConf:
+    spark.sql.extensions: "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+    spark.sql.catalog.nessie: "org.apache.iceberg.spark.SparkCatalog"
+    spark.sql.catalog.nessie.catalog-impl: "org.apache.iceberg.nessie.NessieCatalog"
+    spark.sql.catalog.nessie.uri: "http://nessie.infra.svc.cluster.local:19120/api/v1"
+    spark.sql.catalog.nessie.ref: "main"
+    spark.sql.catalog.nessie.warehouse: "s3a://warehouse/"
+    spark.hadoop.fs.s3a.endpoint: "http://minio.infra.svc.cluster.local:9000"
+    spark.hadoop.fs.s3a.access.key: "minio"
+    spark.hadoop.fs.s3a.secret.key: "minio123"
+    spark.hadoop.fs.s3a.path.style.access: "true"
+    spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    spark.jars: >-
+      local:///opt/spark/jars/iceberg-spark-runtime.jar,
+      local:///opt/spark/jars/nessie-spark-extensions.jar,
+      local:///opt/spark/jars/hadoop-aws.jar,
+      local:///opt/spark/jars/aws-java-sdk-bundle.jar
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "1g"
+    serviceAccount: spark
+    initContainers:
+      - name: fetch-contracts
+        image: minio/mc:RELEASE.2024-01-13T08-44-48Z
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            mc alias set minio http://minio.infra.svc.cluster.local:9000 minio minio123 --insecure &&
+            mc cp --recursive minio/contracts/ /contracts/ || true
+        volumeMounts:
+          - name: contracts
+            mountPath: /contracts
+    volumeMounts:
+      - name: contracts
+        mountPath: /contracts
+      - name: script
+        mountPath: /opt/spark/scripts
+  executor:
+    cores: 2
+    instances: 1
+    memory: "2g"
+    volumeMounts:
+      - name: contracts
+        mountPath: /contracts
+      - name: script
+        mountPath: /opt/spark/scripts
+  volumes:
+    - name: contracts
+      emptyDir: {}
+    - name: script
+      configMap:
+        name: silver-batch-script
