@@ -73,6 +73,8 @@ env:
     value: "false"
   - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
     value: "orchestration"
+  - name: AIRFLOW__API__AUTH_BACKENDS
+    value: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
 
 # ── Worker pod template ───────────────────────────────────────────────────────
 # KubernetesExecutor creates one pod per task. dbt is cloned fresh via
