@@ -1,6 +1,6 @@
 """Bronze → Silver MERGE INTO batch job.
 
-Reads bronze.valid_{table} for a given date and merges into silver.{table}
+Reads bronze.{table}_valid for a given date and merges into silver.{table}
 using the PK declared in the ODCS contract.
 """
 import argparse
@@ -58,12 +58,12 @@ def ensure_silver_table(spark: SparkSession, table_name: str, source_df_schema: 
         CREATE TABLE IF NOT EXISTS nessie.silver.{table_name}
         USING iceberg
         TBLPROPERTIES ('write.merge.mode'='merge-on-read')
-        AS SELECT * FROM nessie.bronze.valid_{table_name} WHERE 1=0
+        AS SELECT * FROM nessie.bronze.{table_name}_valid WHERE 1=0
     """)
 
 
 def process(spark: SparkSession, table_name: str, processing_date: str, reprocess_invalid: bool = False) -> None:
-    source_table = f"nessie.bronze.{'invalid_' if reprocess_invalid else 'valid_'}{table_name}"
+    source_table = f"nessie.bronze.{table_name}_{'invalid' if reprocess_invalid else 'valid'}"
     pks = load_primary_keys(table_name)
 
     source_df = (

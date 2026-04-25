@@ -85,7 +85,7 @@ with DAG(
     catchup=False,
     tags=["silver", "spark", "manual"],
     template_searchpath=[_TEMPLATES_DIR],
-    params={"table_name": "orders", "date": "{{ ds }}"},
+    params={"table_name": "customers", "date": "{{ ds }}"},
 ) as manual_dag:
     SparkKubernetesOperator(
         task_id="submit_silver_manual",
