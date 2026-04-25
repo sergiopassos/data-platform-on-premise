@@ -1,0 +1,32 @@
+dataContractSpecification: "0.9.3"
+id: urn:datacontract:customers
+name: customers
+version: 1.0.0
+description: Auto-generated contract for table customers
+owner: data-platform
+domain: source
+schema:
+  type: table
+  fields:
+    - name: customer_id
+      type: integer
+      required: true
+      primaryKey: true
+    - name: email
+      type: string
+      required: true
+    - name: name
+      type: string
+      required: true
+    - name: created_at
+      type: timestamp
+      required: false
+quality:
+  - type: notNull
+    column: customer_id
+  - type: notNull
+    column: email
+  - type: notNull
+    column: name
+  - type: unique
+    column: customer_id
