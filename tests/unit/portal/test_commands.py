@@ -1,5 +1,4 @@
 """Tests for parse_llm_command and is_known_provider."""
-import pytest
 
 from portal.agent.commands import LLMCommand, is_known_provider, parse_llm_command
 

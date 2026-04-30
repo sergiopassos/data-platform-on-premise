@@ -1,5 +1,4 @@
 """Verify that all providers satisfy the LLMProvider Protocol at runtime."""
-import pytest
 
 from portal.agent.providers.base import LLMProvider
 from portal.agent.providers.fallback import FallbackProvider

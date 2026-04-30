@@ -20,14 +20,13 @@ from pathlib import Path
 import boto3
 import chainlit as cl
 import yaml
-from chainlit.input_widget import Select
-
 from agent.commands import is_known_provider, parse_llm_command
 from agent.connector_activator import ConnectorActivator, PostgresConfig
 from agent.odcs_generator import ODCSGenerator
 from agent.providers import KNOWN_PROVIDERS, ProviderError
 from agent.schema_inspector import PostgresSchemaInspector
 from agent.session import clear_provider, get_provider, set_provider_by_name
+from chainlit.input_widget import Select
 
 _s3 = boto3.client(
     "s3",

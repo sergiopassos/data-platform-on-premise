@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${CURRENT_TAG}"
+            HEADER="## Changes since ${PREV_TAG}"
+          else
+            RANGE="${CURRENT_TAG}"
+            HEADER="## All changes"
+          fi
+
+          COMMITS=$(git log "${RANGE}" --pretty=format:"- %s" --no-merges)
+
+          {
+            echo "notes<<EOF"
+            echo "${HEADER}"
+            echo ""
+            echo "${COMMITS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "Release ${{ github.ref_name }}" \
+            --notes "${{ steps.changelog.outputs.notes }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
