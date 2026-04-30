@@ -1,6 +1,6 @@
 """Tests for OllamaProvider — timeout fix and error wrapping."""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from portal.agent.providers.base import ProviderAPIError, ProviderTimeoutError
 from portal.agent.providers.ollama import OllamaProvider
