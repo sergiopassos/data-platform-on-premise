@@ -1,8 +1,9 @@
 """Tests for the session provider accessors."""
 import sys
 import types
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class _FakeSessionStore(dict):
@@ -32,6 +33,7 @@ def session_store(mock_chainlit):
     mock_chainlit.user_session = store
     # Reload session module to pick up the new store reference
     import importlib
+
     import portal.agent.session as session_mod
     importlib.reload(session_mod)
     return store, session_mod

@@ -1,6 +1,7 @@
 """Tests for GeminiProvider — API key validation, timeout, error wrapping."""
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from portal.agent.providers.base import ProviderAPIError, ProviderTimeoutError
 
