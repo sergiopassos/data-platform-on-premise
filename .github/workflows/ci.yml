@@ -26,7 +26,7 @@ jobs:
             pip-3.13-
 
       - name: Install dependencies
-        run: pip install -e . -r agents/requirements.txt -r portal/requirements.txt
+        run: pip install ruff -r agents/requirements.txt -r portal/requirements.txt
 
       - name: Lint (ruff)
         run: ruff check agents/ portal/ tests/
