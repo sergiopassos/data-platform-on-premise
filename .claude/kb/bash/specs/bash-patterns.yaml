@@ -1,0 +1,231 @@
+# Bash Scripting Patterns — Machine-Readable Registry
+# MCP Validated: 2026-04-24
+
+domain: bash
+version: "1.0"
+mcp_validated: "2026-04-24"
+confidence: 0.95
+
+# ─── Safety Flags ─────────────────────────────────────────────────────────────
+safety_flags:
+  required:
+    - flag: "-e"
+      effect: "Exit immediately if any command exits non-zero"
+      set_via: "set -e"
+    - flag: "-u"
+      effect: "Treat unset variables as errors"
+      set_via: "set -u"
+    - flag: "-o pipefail"
+      effect: "Pipeline exit code is the last non-zero command"
+      set_via: "set -o pipefail"
+  combined: "set -euo pipefail"
+  debug_only:
+    - flag: "-x"
+      effect: "Print each command before executing"
+
+# ─── Script Header Template ───────────────────────────────────────────────────
+script_header:
+  shebang: "#!/usr/bin/env bash"
+  safety: "set -euo pipefail"
+  root_dir_detection: |
+    ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    cd "$ROOT_DIR"
+  require_cmd_guard: |
+    _require_cmd() {
+      command -v "$1" &>/dev/null || { echo "[ERROR] '$1' not found." >&2; exit 1; }
+    }
+
+# ─── Variable Expansion Forms ─────────────────────────────────────────────────
+variable_forms:
+  - form: "${VAR:-default}"
+    meaning: "Use default if VAR is unset or empty"
+    use_case: "Optional config with fallback"
+    example: "${PORT:-8080}"
+  - form: "${VAR:?message}"
+    meaning: "Abort with message if VAR is unset or empty"
+    use_case: "Mandatory parameters"
+    example: "${CLUSTER:?must set CLUSTER}"
+  - form: "${VAR:+val}"
+    meaning: "Use val only if VAR is set and non-empty"
+    use_case: "Conditional flags"
+    example: "${DEBUG:+--verbose}"
+  - form: "${VAR##*/}"
+    meaning: "Strip longest prefix matching pattern"
+    use_case: "Extract basename without fork"
+    example: "${path##*/}"
+  - form: "${VAR%.yaml}"
+    meaning: "Strip shortest suffix matching pattern"
+    use_case: "Remove file extension"
+    example: "${config_file%.yaml}"
+
+# ─── Trap Signals ─────────────────────────────────────────────────────────────
+trap_signals:
+  - signal: ERR
+    fires: "Any command exits non-zero (requires set -e)"
+    use_case: "Print line number and $BASH_COMMAND for diagnostics"
+    pattern: "trap '_on_error $LINENO' ERR"
+  - signal: EXIT
+    fires: "Script exits for any reason including errors"
+    use_case: "Cleanup temp files, remove one-shot pods"
+    pattern: "trap _cleanup EXIT"
+  - signal: INT
+    fires: "SIGINT (Ctrl-C)"
+    use_case: "Graceful abort"
+  - signal: TERM
+    fires: "SIGTERM (container stop)"
+    use_case: "Graceful shutdown"
+
+# ─── Polling Patterns ─────────────────────────────────────────────────────────
+polling:
+  deadline_loop:
+    description: "Loop until wall-clock deadline (portable, no GNU timeout needed)"
+    pattern: |
+      deadline=$(( $(date +%s) + TIMEOUT_SECS ))
+      while (( $(date +%s) < deadline )); do
+        command && break || sleep INTERVAL
+      done
+    timeout_default_secs: 120
+    sleep_interval_secs: 5
+  kubectl_wait:
+    description: "Use after pod exists — exact condition check, no polling"
+    conditions:
+      - "condition=Ready"
+      - "condition=Available"
+      - "jsonpath='{.status.phase}'=Succeeded"
+    timeout_flag: "--timeout=Ns"
+  retry_n_times:
+    description: "Attempt a command N times with fixed delay between tries"
+    pattern: |
+      for attempt in $(seq 1 N); do
+        command && break || { sleep DELAY; continue; }
+      done
+
+# ─── kubectl Patterns ─────────────────────────────────────────────────────────
+kubectl_patterns:
+  pod_name_lookup:
+    command: "kubectl get pod -n NS -l LABEL -o jsonpath='{.items[0].metadata.name}'"
+    notes: "Returns empty string (not error) if no pods match with 2>/dev/null"
+  idempotent_secret:
+    command: "kubectl create secret generic NAME ... --dry-run=client -o yaml | kubectl apply -f -"
+    notes: "Creates if absent, updates if present, no error if identical"
+  exec_pod:
+    command: "kubectl exec -n NS POD -- COMMAND ARGS"
+    notes: "Add -it for interactive; omit for scripted use"
+  run_job:
+    command: "kubectl run NAME --image=IMG --restart=Never -n NS -- CMD"
+    wait: "kubectl wait pod/NAME -n NS --for=jsonpath='{.status.phase}'=Succeeded"
+    cleanup: "kubectl delete pod NAME -n NS"
+  rollout:
+    restart: "kubectl rollout restart deployment/NAME -n NS"
+    wait: "kubectl rollout status deployment/NAME -n NS --timeout=600s"
+
+# ─── curl + jq Patterns ───────────────────────────────────────────────────────
+curl_patterns:
+  health_check:
+    command: "curl -sf URL"
+    notes: "-s silent, -f fail on 4xx/5xx"
+  capture_status_and_body:
+    command: "curl -s -o OUTFILE -w '%{http_code}' URL"
+    notes: "HTTP code to stdout; body to file; combine with jq for parsing"
+  authenticated_get:
+    command: "curl -sf -u USER:PASS URL"
+  post_json:
+    command: "curl -sf -X POST URL -H 'Content-Type: application/json' -d '{...}'"
+  jq_exit_code:
+    command: "jq -e 'EXPRESSION' FILE"
+    notes: "Exits 1 if expression is false/null — usable in conditionals"
+  jq_null_safe:
+    command: "jq -r '.field // \"default\"'"
+
+# ─── Color Output Helpers ─────────────────────────────────────────────────────
+color_helpers:
+  ansi_codes:
+    RED: '\033[0;31m'
+    GREEN: '\033[0;32m'
+    YELLOW: '\033[1;33m'
+    BLUE: '\033[0;34m'
+    CYAN: '\033[0;36m'
+    BOLD: '\033[1m'
+    RESET: '\033[0m'
+  output_functions:
+    - name: _pass
+      color: GREEN
+      prefix: "[PASS]"
+      increments: PASS
+    - name: _fail
+      color: RED
+      prefix: "[FAIL]"
+      increments: FAIL
+    - name: _skip
+      color: YELLOW
+      prefix: "[SKIP]"
+      increments: SKIP
+    - name: _manual
+      color: CYAN
+      prefix: "[MANUAL]"
+      increments: MANUAL
+    - name: _info
+      color: BLUE
+      prefix: "[INFO]"
+      increments: none
+    - name: _header
+      color: BOLD YELLOW
+      prefix: "▶"
+      increments: none
+    - name: log
+      color: none
+      prefix: "[HH:MM:SS]"
+      increments: none
+
+# ─── Here-doc Forms ───────────────────────────────────────────────────────────
+heredoc_forms:
+  - delimiter: "'EOF'"
+    variable_expansion: false
+    use_case: "Static YAML/SQL/TOML content"
+  - delimiter: "EOF"
+    variable_expansion: true
+    use_case: "Templated content with ${VAR} interpolation"
+  - delimiter: "-'EOF'"
+    variable_expansion: false
+    use_case: "Static content with leading TABs stripped"
+  herestring:
+    syntax: "command <<< \"$VARIABLE\""
+    use_case: "Pass single variable as stdin without temp file or echo pipe"
+
+# ─── File Manifests ───────────────────────────────────────────────────────────
+files:
+  concepts:
+    - path: concepts/script-header.md
+      lines_limit: 150
+      confidence: 0.95
+    - path: concepts/error-handling.md
+      lines_limit: 150
+      confidence: 0.95
+    - path: concepts/variable-safety.md
+      lines_limit: 150
+      confidence: 0.95
+    - path: concepts/colored-output.md
+      lines_limit: 150
+      confidence: 0.95
+    - path: concepts/argument-parsing.md
+      lines_limit: 150
+      confidence: 0.95
+    - path: concepts/functions-and-return-codes.md
+      lines_limit: 150
+      confidence: 0.95
+  patterns:
+    - path: patterns/polling-retry-loop.md
+      lines_limit: 200
+      confidence: 0.95
+    - path: patterns/kubectl-scripting.md
+      lines_limit: 200
+      confidence: 0.95
+    - path: patterns/curl-jq-rest.md
+      lines_limit: 200
+      confidence: 0.95
+    - path: patterns/heredoc-herestring.md
+      lines_limit: 200
+      confidence: 0.95
+    - path: patterns/tempfile-cleanup.md
+      lines_limit: 200
+      confidence: 0.95
