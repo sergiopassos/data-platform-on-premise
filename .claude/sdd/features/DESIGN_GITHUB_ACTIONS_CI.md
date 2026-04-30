@@ -27,24 +27,23 @@
 │  ┌─────────────────────┐          ┌─────────────────────────┐   │
 │  │       ci.yml        │          │      release.yml        │   │
 │  ├─────────────────────┤          ├─────────────────────────┤   │
-│  │  matrix: [3.11,3.13]│          │  python: 3.13           │   │
+│  │  python: 3.13       │          │  python: 3.13           │   │
 │  │  ┌────────────────┐ │          │  1. checkout (full)     │   │
-│  │  │ test (3.11)    │ │◄─parallel│  2. get prev tag        │   │
-│  │  │ test (3.13)    │ │          │  3. git log → changelog  │   │
-│  │  └────────────────┘ │          │  4. gh release create   │   │
-│  │  Each leg:          │          └─────────────────────────┘   │
-│  │  1. checkout        │                    │                   │
-│  │  2. setup-python    │                    ▼                   │
-│  │  3. restore cache   │          GitHub Release page           │
-│  │  4. pip install -e .│          title: "v1.0.0"               │
-│  │  5. ruff check      │          body:  changelog              │
-│  │  6. pytest unit     │                                        │
+│  │  │     test       │ │          │  2. get prev tag        │   │
+│  │  └────────────────┘ │          │  3. git log → changelog  │   │
+│  │  Steps:             │          │  4. gh release create   │   │
+│  │  1. checkout        │          └─────────────────────────┘   │
+│  │  2. setup-python    │                    │                   │
+│  │  3. restore cache   │                    ▼                   │
+│  │  4. pip install -e .│          GitHub Release page           │
+│  │  5. ruff check      │          title: "v1.0.0"               │
+│  │  6. pytest unit     │          body:  changelog              │
 │  │  7. save cache      │                                        │
 │  └──────────┬──────────┘                                        │
 │             │                                                    │
 │             ▼                                                    │
-│  PR check: ✅ test (3.11) + ✅ test (3.13)                       │
-│  Branch protection blocks merge until both green                 │
+│  PR check: ✅ test                                               │
+│  Branch protection blocks merge until green                      │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -72,7 +71,25 @@
 
 ---
 
-### Decision 2: pip cache keyed on requirements hash, not week number
+### Decision 2: Single Python version (3.13), not a matrix
+
+| Attribute | Value |
+|-----------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-04-30 |
+
+**Context:** The project is an internal data platform running on a single KIND cluster node, not a library distributed to end-users across multiple Python runtimes. `pyproject.toml` declares `requires-python = ">=3.11"` as a floor, not a cross-version compatibility promise.
+
+**Choice:** CI runs on Python 3.13 only. Python version compatibility is documented in `pyproject.toml` rather than validated by a matrix.
+
+**Rationale:** A matrix doubles CI job count and cost for no practical benefit — the platform is deployed as a single Docker image using one pinned Python version. Testing two versions would catch hypothetical cross-version bugs that never occur in production. The `>=3.11` floor in `pyproject.toml` communicates the constraint to tooling (pip, uv) without requiring CI to prove it on every PR.
+
+**Alternatives Rejected:**
+1. `matrix: ["3.11", "3.13"]` — doubles job time and quota; no production scenario requires running on 3.11
+
+---
+
+### Decision 3: pip cache keyed on requirements hash, not week number
 
 | Attribute | Value |
 |-----------|-------|
@@ -90,7 +107,7 @@
 
 ---
 
-### Decision 3: Changelog via `git log`, not a changelog action
+### Decision 4: Changelog via `git log`, not a changelog action
 
 | Attribute | Value |
 |-----------|-------|
@@ -109,7 +126,7 @@
 
 ---
 
-### Decision 4: `fetch-depth: 0` only in `release.yml`
+### Decision 5: `fetch-depth: 0` only in `release.yml`
 
 | Attribute | Value |
 |-----------|-------|
@@ -147,29 +164,24 @@ on:
 
 jobs:
   test:
-    name: test (${{ matrix.python-version }})
+    name: test
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
 
       - name: Restore pip cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ matrix.python-version }}-${{ hashFiles('agents/requirements.txt', 'portal/requirements.txt', 'pyproject.toml') }}
+          key: pip-3.13-${{ hashFiles('agents/requirements.txt', 'portal/requirements.txt', 'pyproject.toml') }}
           restore-keys: |
-            pip-${{ matrix.python-version }}-
+            pip-3.13-
 
       - name: Install dependencies
         run: pip install -e . -r agents/requirements.txt -r portal/requirements.txt
@@ -248,10 +260,10 @@ These are YAML configuration files — no unit tests apply. Validation is functi
 
 | Test | Method | Pass Condition |
 |------|--------|----------------|
-| ci.yml triggers on PR | Open a test PR against `main` | Both `test (3.11)` and `test (3.13)` jobs appear in PR checks |
-| ci.yml passes on green code | Current codebase, all tests pass | Both jobs green |
-| ci.yml fails on broken lint | Add `import os` unused to any file | At least one job fails with ruff error |
-| ci.yml fails on broken test | Add `assert False` to any unit test | At least one job fails with pytest exit code 1 |
+| ci.yml triggers on PR | Open a test PR against `main` | `test` job appears in PR checks |
+| ci.yml passes on green code | Current codebase, all tests pass | `test` job green |
+| ci.yml fails on broken lint | Add `import os` unused to any file | `test` job fails with ruff error |
+| ci.yml fails on broken test | Add `assert False` to any unit test | `test` job fails with pytest exit code 1 |
 | cache works | Run CI twice without changing deps | Second run: `Cache hit` in restore step, install < 10s |
 | release.yml creates release | `git tag v0.0.1-test && git push origin v0.0.1-test` | GitHub Release page shows `v0.0.1-test` with changelog |
 | release.yml with no prev tag | First tag in repo | Release created with full commit history |
@@ -263,8 +275,7 @@ These are YAML configuration files — no unit tests apply. Validation is functi
 After merging the workflows to `main`, configure branch protection in **GitHub → Settings → Branches → Add rule → `main`**:
 
 - [ ] Check **Require status checks to pass before merging**
-- [ ] Search and add required check: `test (3.11)`
-- [ ] Search and add required check: `test (3.13)`
+- [ ] Search and add required check: `test`
 - [ ] Optionally enable **Require branches to be up to date before merging**
 - [ ] Save the rule
 

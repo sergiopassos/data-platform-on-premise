@@ -1,6 +1,6 @@
 # DEFINE: GitHub Actions CI/CD
 
-> Two GitHub Actions workflows: a PR gate (lint + unit tests, Python 3.11 + 3.13 matrix) and a tag-triggered release workflow that auto-generates a changelog and creates a GitHub Release.
+> Two GitHub Actions workflows: a PR gate (lint + unit tests, single Python 3.13 job) and a tag-triggered release workflow that auto-generates a changelog and creates a GitHub Release. Python 3.13 is the documented supported version; `pyproject.toml` declares `requires-python = ">=3.11"` but CI validates only the primary runtime.
 
 ## Metadata
 
@@ -35,11 +35,10 @@ The repository has no CI automation. Pull requests can merge without running the
 
 | Priority | Goal |
 |----------|------|
-| **MUST** | Every PR targeting `main` runs `ruff check` and `pytest tests/unit/` on Python 3.11 and 3.13 before merge is allowed |
+| **MUST** | Every PR targeting `main` runs `ruff check` and `pytest tests/unit/` on Python 3.13 before merge is allowed |
 | **MUST** | CI job failure blocks the merge (enforced via branch protection) |
 | **MUST** | pip dependencies are cached between runs to keep CI under 2 minutes |
 | **MUST** | Pushing a `v*` tag to `main` automatically creates a GitHub Release with a changelog derived from conventional commits since the previous tag |
-| **SHOULD** | CI matrix runs Python 3.11 and 3.13 in parallel — not sequentially |
 | **SHOULD** | Release changelog groups commits by type (`feat`, `fix`, `chore`, etc.) |
 
 ---
@@ -47,11 +46,11 @@ The repository has no CI automation. Pull requests can merge without running the
 ## Success Criteria
 
 - [ ] Opening a PR against `main` triggers `ci.yml` within 30 seconds
-- [ ] `ci.yml` runs two parallel jobs: `test (3.11)` and `test (3.13)`
-- [ ] Each job installs deps, runs `ruff check agents/ portal/ tests/`, then `pytest tests/unit/ -q`
+- [ ] `ci.yml` runs a single `test` job on Python 3.13
+- [ ] The job installs deps, runs `ruff check agents/ portal/ tests/`, then `pytest tests/unit/ -q`
 - [ ] A job that fails (lint error or test failure) blocks the PR merge
 - [ ] A job that passes does not block the PR merge
-- [ ] Total CI runtime ≤ 2 minutes per job leg (with warm pip cache)
+- [ ] Total CI runtime ≤ 2 minutes (with warm pip cache)
 - [ ] Pushing `git tag v1.0.0 && git push origin v1.0.0` triggers `release.yml`
 - [ ] `release.yml` creates a GitHub Release titled `v1.0.0` with a changelog of commits since the previous tag
 - [ ] If no previous tag exists, changelog covers all commits on `main`
@@ -62,8 +61,8 @@ The repository has no CI automation. Pull requests can merge without running the
 
 | ID | Scenario | Given | When | Then |
 |----|----------|-------|------|------|
-| AT-001 | PR with passing tests | `main` branch, CI configured, all 91 tests pass | PR is opened targeting `main` | Both matrix jobs (`test (3.11)`, `test (3.13)`) report green; merge is unblocked |
-| AT-002 | PR with failing test | A test in `tests/unit/` is intentionally broken | PR is opened targeting `main` | At least one matrix job fails; merge is blocked; PR shows red check |
+| AT-001 | PR with passing tests | `main` branch, CI configured, all 91 tests pass | PR is opened targeting `main` | `test` job reports green on Python 3.13; merge is unblocked |
+| AT-002 | PR with failing test | A test in `tests/unit/` is intentionally broken | PR is opened targeting `main` | `test` job fails; merge is blocked; PR shows red check |
 | AT-003 | PR with lint error | A file in `agents/` has an unused import | PR is opened targeting `main` | `ruff check` step fails; job fails; merge is blocked |
 | AT-004 | pip cache hit | CI has run at least once; requirements files unchanged | New PR is opened | Cache restore step shows `Cache hit`; install step takes < 10s |
 | AT-005 | Tag push creates release | `main` is clean, previous tag `v0.9.0` exists | `git tag v1.0.0 && git push origin v1.0.0` | GitHub Release `v1.0.0` created with changelog listing commits since `v0.9.0` |
@@ -91,7 +90,7 @@ The repository has no CI automation. Pull requests can merge without running the
 |------|------------|--------|
 | Technical | `pip install` installs `chainlit==2.0.4` which has heavy transitive deps | Cache is critical to stay under 2-min target; without cache, install alone may take 60s+ |
 | Technical | `portal/requirements.txt` pins `google-generativeai==0.8.3` — pinned version must be available on PyPI for both Python versions | If package is yanked, CI breaks; acceptable risk |
-| Technical | `pyproject.toml` declares `requires-python = ">=3.11"` — both matrix versions satisfy this | No constraint violation |
+| Technical | `pyproject.toml` declares `requires-python = ">=3.11"` — Python 3.13 satisfies this; 3.11 compatibility is declared but not CI-validated | Acceptable trade-off: project runs on a single-node KIND cluster, not a multi-version deployment |
 | Operational | Branch protection rules must be set manually in GitHub Settings after workflows are merged | Document as post-deploy checklist — cannot be automated via workflow files |
 | Operational | `release.yml` needs `GITHUB_TOKEN` write permission to create releases | Use `permissions: contents: write` in the workflow — no extra secret needed for public repos |
 
@@ -102,8 +101,7 @@ The repository has no CI automation. Pull requests can merge without running the
 These steps must be performed in GitHub repository Settings → Branches → Branch protection rules for `main`:
 
 - [ ] Enable **Require status checks to pass before merging**
-- [ ] Add required status check: `test (3.11)`
-- [ ] Add required status check: `test (3.13)`
+- [ ] Add required status check: `test`
 - [ ] Enable **Require branches to be up to date before merging** (optional but recommended)
 - [ ] Enable **Do not allow bypassing the above settings** (prevent admin bypass)
 

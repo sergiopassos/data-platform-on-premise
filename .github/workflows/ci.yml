@@ -6,29 +6,24 @@ on:
 
 jobs:
   test:
-    name: test (${{ matrix.python-version }})
+    name: test
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
 
       - name: Restore pip cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ matrix.python-version }}-${{ hashFiles('agents/requirements.txt', 'portal/requirements.txt', 'pyproject.toml') }}
+          key: pip-3.13-${{ hashFiles('agents/requirements.txt', 'portal/requirements.txt', 'pyproject.toml') }}
           restore-keys: |
-            pip-${{ matrix.python-version }}-
+            pip-3.13-
 
       - name: Install dependencies
         run: pip install -e . -r agents/requirements.txt -r portal/requirements.txt
