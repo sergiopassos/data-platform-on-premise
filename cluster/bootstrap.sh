@@ -106,6 +106,18 @@ kubectl create secret generic postgres-source-secret \
   --dry-run=client -o yaml \
   | kubectl apply -f -
 
+# ── 8b. gemini-api-secret for Chainlit portal ────────────────────────────────
+log "Creating gemini-api-secret in portal namespace..."
+if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+  log "WARNING: GEMINI_API_KEY env var is empty — creating placeholder secret."
+  log "         Gemini provider will fail until the secret is updated."
+fi
+kubectl create secret generic gemini-api-secret \
+  -n portal \
+  --from-literal=api-key="${GEMINI_API_KEY:-placeholder-replace-me}" \
+  --dry-run=client -o yaml \
+  | kubectl apply -f -
+
 # ── 9. Airflow secrets + DB migration ────────────────────────────────────────
 log "Creating Airflow secrets in orchestration namespace..."
 kubectl create secret generic airflow-git-ssh \
