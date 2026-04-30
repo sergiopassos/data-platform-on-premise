@@ -1,0 +1,20 @@
+apiVersion: v2
+kind: DataContract
+id: orders-bronze
+version: 1.0.0
+name: orders
+schema:
+  - name: orders
+    type: table
+    fields:
+      - name: id
+        type: integer
+        required: true
+      - name: customer_id
+        type: integer
+      - name: total_amount
+        type: number
+      - name: status
+        type: string
+      - name: created_at
+        type: string

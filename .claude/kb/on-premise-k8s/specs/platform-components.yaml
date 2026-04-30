@@ -1,0 +1,184 @@
+# On-Premise Data Platform — Component Registry
+# Source of truth for component versions, Helm chart sources, and namespace mapping
+
+platform:
+  name: data-platform
+  cluster: kind  # kind | bare-metal
+  gitops: argocd
+
+namespaces:
+  - argocd
+  - streaming
+  - storage
+  - processing
+  - serving
+  - orchestration
+  - governance
+  - portal
+  - infra
+
+components:
+
+  # ── GitOps ──────────────────────────────────────────────────────────
+  argocd:
+    namespace: argocd
+    type: helm
+    chart: argo/argo-cd
+    version: "7.3.11"
+    helm_repo: https://argoproj.github.io/argo-helm
+    values_path: null   # installed manually in bootstrap.sh, not via ArgoCD self-management
+    notes:
+      - "Install via bootstrap.sh with --set server.extraArgs[0]=--insecure"
+      - "SSH repo secret must be created before root-app is applied"
+
+  # ── Streaming ────────────────────────────────────────────────────────
+  strimzi-operator:
+    namespace: streaming
+    type: helm
+    chart: strimzi/strimzi-kafka-operator
+    version: "0.41.0"
+    helm_repo: https://strimzi.io/charts/
+    values_path: helm/kafka/values.yaml
+    argocd_app: gitops/apps/kafka-app.yaml
+    crd_notes:
+      - "KafkaTopic metadata.name must be RFC 1123 (lowercase, no underscores)"
+      - "Use storage.type: ephemeral for Kafka+ZK in KIND to avoid PVC race"
+      - "StrimziPodSet replaces StatefulSet in 0.41.0"
+
+  kafka-connect:
+    namespace: streaming
+    type: manifest
+    manifest_path: manifests/kafka/kafka-connect.yaml
+    image: quay.io/debezium/connect:2.6
+    notes:
+      - "Plain Deployment, not Strimzi KafkaConnect CRD"
+      - "Strimzi KafkaConnect requires custom image build with registry push"
+      - "Debezium REST API on port 8083"
+
+  # ── Storage ──────────────────────────────────────────────────────────
+  minio:
+    namespace: storage
+    type: helm
+    chart: minio/minio
+    helm_repo: https://charts.min.io/
+    values_path: helm/minio/values.yaml
+    argocd_app: gitops/apps/minio-app.yaml
+    endpoint: "http://minio.storage.svc.cluster.local:9000"
+    bucket: lakehouse
+
+  nessie:
+    namespace: storage
+    type: helm
+    chart: projectnessie/nessie
+    helm_repo: https://charts.projectnessie.org
+    values_path: helm/nessie/values.yaml
+    argocd_app: gitops/apps/nessie-app.yaml
+    endpoint: "http://nessie.storage.svc.cluster.local:19120/api/v1"
+    notes:
+      - "Acts as Iceberg REST catalog (Git-like branching)"
+      - "Trino and Spark both use Nessie as catalog endpoint"
+
+  # ── Processing ───────────────────────────────────────────────────────
+  spark-operator:
+    namespace: processing
+    type: helm
+    chart: spark-operator/spark-operator
+    version: "2.1.0"
+    helm_repo: https://kubeflow.github.io/spark-operator
+    values_path: helm/spark-operator/values.yaml
+    argocd_app: gitops/apps/spark-operator-app.yaml
+    crd_notes:
+      - "CRDs exceed 262KB — must use skipCrds: true in ArgoCD"
+      - "Pre-install CRDs via: helm template --include-crds | kubectl apply --server-side"
+      - "webhook.port MUST be 9443, not 8080 (conflicts with metrics server)"
+      - "CRDs lost on KIND cluster recreate — re-run pre-install step each time"
+
+  # ── Serving ──────────────────────────────────────────────────────────
+  trino:
+    namespace: serving
+    type: helm
+    chart: trinodb/trino
+    helm_repo: https://trinodb.github.io/charts
+    values_path: helm/trino/values.yaml
+    argocd_app: gitops/apps/trino-app.yaml
+    endpoint: "http://trino.serving.svc.cluster.local:8080"
+    catalogs:
+      - name: iceberg
+        type: iceberg
+        catalog_impl: rest  # via Nessie
+    notes:
+      - "Airflow connection: trino://trino.serving.svc.cluster.local:8080/iceberg"
+      - "dbt profile type: trino, method: none (no auth in dev)"
+
+  # ── Orchestration ────────────────────────────────────────────────────
+  airflow:
+    namespace: orchestration
+    type: helm
+    chart: apache-airflow/airflow
+    version: "1.15.0"
+    helm_repo: https://airflow.apache.org
+    values_path: helm/airflow/values.yaml
+    argocd_app: gitops/apps/airflow-app.yaml
+    executor: KubernetesExecutor
+    extra_packages:
+      - "astronomer-cosmos==1.5.0"
+      - "dbt-core==1.8.0"
+      - "dbt-trino==1.8.0"
+    notes:
+      - "postgresql.image.tag must be 'latest' — Bitnami removes old Docker Hub tags"
+      - "logs.persistence.enabled: false — local-path only supports RWO"
+      - "dbt project mounted at /opt/airflow/dbt via PVC"
+
+  # ── Governance ───────────────────────────────────────────────────────
+  openmetadata:
+    namespace: governance
+    type: helm
+    chart: open-metadata/openmetadata
+    helm_repo: https://helm.open-metadata.org
+    values_path: helm/openmetadata/values.yaml
+    argocd_app: gitops/apps/openmetadata-app.yaml
+    notes:
+      - "Requires ElasticSearch or OpenSearch dependency"
+      - "Check CRD sizes before applying — may need server-side apply"
+
+  # ── Portal ───────────────────────────────────────────────────────────
+  chainlit:
+    namespace: portal
+    type: helm
+    chart: local  # custom chart in helm/chainlit/
+    values_path: helm/chainlit/values.yaml
+    argocd_app: gitops/apps/chainlit-app.yaml
+    image: data-platform/chainlit-portal:latest
+    image_pull_policy: Never   # loaded via kind load docker-image
+    python_packages:
+      - "chainlit>=2.0.4"   # 1.x incompatible with pydantic v2
+      - "psycopg[binary]==3.1.18"
+    notes:
+      - "Image built locally: docker build -t data-platform/chainlit-portal:latest portal/"
+      - "Image loaded: kind load docker-image data-platform/chainlit-portal:latest"
+      - "postgres-source-secret must exist in portal namespace"
+      - "datacontract-cli removed — conflicts with chainlit on opentelemetry versions"
+
+  ollama:
+    namespace: portal
+    type: helm
+    chart: ollama/ollama  # or local
+    values_path: helm/ollama/values.yaml
+    argocd_app: gitops/apps/ollama-app.yaml
+    model: "llama3.2:3b"
+    notes:
+      - "Init container must use SERVE_PID=$! then kill $SERVE_PID — NOT kill %1 (no job control in sh)"
+      - "REST API: http://ollama.portal.svc.cluster.local:11434"
+
+# ── External Dependencies (not in cluster) ──────────────────────────
+external:
+  postgres-source:
+    type: docker
+    container: postgres-source
+    image: postgres:16
+    location: "Docker on host (outside KIND)"
+    role: "CDC source system — simulates production PostgreSQL"
+    access_from_kind: "postgres.infra.svc.cluster.local:5432 (or host network)"
+    notes:
+      - "Not part of the platform — simulates an external source system"
+      - "Debezium connects to this Postgres for CDC"
